@@ -74,25 +74,41 @@ def classify_ineligible(res: Result, gstr: list[Invoice]) -> dict[str, list[Invo
     return out
 
 
-def pan_conflicts(res: Result) -> list[tuple[str, str, str, int, float]]:
-    """Rows on both sides that share a PAN but not a GSTIN -- the same supplier
-    recorded against two different registrations. Returns
-    (pan, books_gstin, portal_gstin, invoice_count, tax) per conflict.
-    """
-    books: dict[str, dict[str, list[Invoice]]] = defaultdict(lambda: defaultdict(list))
-    portal: dict[str, dict[str, list[Invoice]]] = defaultdict(lambda: defaultdict(list))
-    for t in res.only_tally:
-        books[pan(t.gstin)][t.gstin].append(t)
-    for g in res.only_gstr:
-        portal[pan(g.gstin)][g.gstin].append(g)
+def pan_conflicts(res: Result, tally: list[Invoice], gstr: list[Invoice]) -> list[tuple]:
+    """One row per PAN with unmatched invoices on both sides under different
+    GSTINs. Returns (pan, books_gstins, portal_gstins, books_count, books_tax,
+    portal_count, portal_tax).
 
+    Groups the already-correct, already-deduplicated 'other_registration'
+    invoices from classify_ineligible/classify_unclaimed by PAN -- it does not
+    re-derive who is unmatched. An earlier version joined every books-GSTIN
+    against every portal-GSTIN sharing a PAN directly, so a supplier filing
+    from three registrations (Redington: two portal GSTINs against one books
+    GSTIN) had its books invoices counted once per portal GSTIN they were
+    compared against -- the same 4 invoices, Rs 15,418, appeared twice.
+    Grouping instead of joining means each invoice is counted exactly once.
+    """
+    books_orr = classify_ineligible(res, gstr).get("other_registration", [])
+    portal_orr = classify_unclaimed(res, tally).get("other_registration", [])
+
+    def by_pan(rows: list[Invoice]) -> dict[str, list[Invoice]]:
+        out: dict[str, list[Invoice]] = defaultdict(list)
+        for r in rows:
+            out[pan(r.gstin)].append(r)
+        return out
+
+    b, p = by_pan(books_orr), by_pan(portal_orr)
     out = []
-    for p in set(books) & set(portal):
-        for bg, brows in books[p].items():
-            for pg, prows in portal[p].items():
-                if bg != pg:
-                    out.append((p, bg, pg, len(brows), _total(brows)))
-    return sorted(out, key=lambda x: -x[4])
+    for k in set(b) | set(p):
+        brows, prows = b.get(k, []), p.get(k, [])
+        out.append((
+            k,
+            sorted({r.gstin for r in brows}),
+            sorted({r.gstin for r in prows}),
+            len(brows), _total(brows),
+            len(prows), _total(prows),
+        ))
+    return sorted(out, key=lambda x: -x[6])
 
 
 def evaluate(res: Result, planted: dict) -> dict:
@@ -201,12 +217,14 @@ def print_report(tally: list[Invoice], gstr: list[Invoice], res: Result, *, show
                   f"books {p.tally.tax:>10,.2f}   2A {p.gstr.tax:>10,.2f}   "
                   f"delta {p.tax_delta:>+10,.2f}")
 
-    conflicts = pan_conflicts(res)
+    conflicts = pan_conflicts(res, tally, gstr)
     if conflicts:
-        print(f"\nSAME SUPPLIER, TWO REGISTRATIONS  {len(conflicts)} conflicts")
+        total_v = sum(c[6] for c in conflicts)
+        print(f"\nSAME SUPPLIER, TWO REGISTRATIONS  {len(conflicts)} suppliers, {rupees(total_v)}")
         print("    Not auto-matched: different GSTINs are different registrations.")
-        for p, bg, pg, n, v in conflicts[:show]:
-            print(f"    PAN {p}   books {bg}  ->  2A {pg}   {n} inv  {rupees(v)}")
+        for pn, bg, pg, bn, bv, pcount, pv in conflicts[:show]:
+            print(f"    PAN {pn}   books {'/'.join(bg) or '-'} ({bn} inv, {rupees(bv)})"
+                  f"  ->  2A {'/'.join(pg) or '-'} ({pcount} inv, {rupees(pv)})")
 
     # s.17(5) review candidates. Flagged, never excluded from any total --
     # whether a credit is blocked is a legal call the practitioner makes.

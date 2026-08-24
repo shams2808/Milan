@@ -9,7 +9,7 @@ from datetime import date
 
 from .core import Invoice, norm_loose, norm_strict
 from .match import _edit_distance, _is_coded, reconcile, AMOUNT, BYVALUE, EXACT
-from .report import evaluate, suspected_gstin_typos
+from .report import classify_unclaimed, evaluate, pan_conflicts, suspected_gstin_typos
 from .synth import build_year
 
 GST_A = "27AABCU9603R1ZM"
@@ -114,6 +114,31 @@ def test_end_to_end_accuracy():
     # match only lands on a human's review list. Precision matters more.
     assert ev["wrong"] == 0, f"wrong matches: {ev['wrong']}"
     assert ev["recall"] > 0.95, ev["recall"]
+
+
+def test_pan_conflicts_do_not_double_count():
+    """A supplier filing from three GSTINs under one PAN must not have its
+    books invoices counted once per portal GSTIN it happens to be compared
+    against. Regression for a real bug: joining every books-GSTIN against
+    every portal-GSTIN sharing a PAN summed the same 4 invoices twice."""
+    d = date(2025, 6, 10)
+    books = Invoice(gstin="07AABCR0347P1Z5", supplier="Redington", inv_no="A1",
+                     inv_date=d, taxable=1000.0, igst=180.0,
+                     source="TALLY", row_id="t1")
+    p1 = Invoice(gstin="10AABCR0347P1ZI", supplier="Redington", inv_no="B1",
+                 inv_date=d, taxable=2000.0, igst=360.0, source="2A", row_id="g1")
+    p2 = Invoice(gstin="27AABCR0347P1Z3", supplier="Redington", inv_no="C1",
+                 inv_date=d, taxable=3000.0, igst=540.0, source="2A", row_id="g2")
+
+    res = reconcile([books], [p1, p2])
+    conflicts = pan_conflicts(res, [books], [p1, p2])
+    assert len(conflicts) == 1, "one PAN, one row -- not one row per GSTIN pair"
+
+    total_from_conflicts = sum(c[6] for c in conflicts)
+    total_from_bucket = sum(
+        i.tax for i in classify_unclaimed(res, [books]).get("other_registration", [])
+    )
+    assert total_from_conflicts == total_from_bucket == p1.tax + p2.tax
 
 
 def test_matching_is_one_to_one():

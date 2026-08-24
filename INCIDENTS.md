@@ -221,3 +221,48 @@ again.
 
 The lesson repeats #1 and #2: the arithmetic was right every time. Only real
 data showed the arithmetic was answering the wrong question.
+
+---
+
+## #7 — the same 17 invoices got counted twice, in a document already shown to a user
+
+**Building the bill-level backup document**, requested after the four-bucket
+summary. Bucket 3 ("fix the ledger") should have summed to ₹523,297 — the
+number already given verbally, computed correctly by the bottom-line total.
+The new table summed to ₹583,381.
+
+`pan_conflicts()` joined every books-GSTIN against every portal-GSTIN sharing a
+PAN and reported the *full* books total on each pairing:
+
+```
+AABCR0347P  books 07AABCR0347P1Z5 -> 2A 10AABCR0347P1ZI   4 inv  Rs 15,418
+AABCR0347P  books 07AABCR0347P1Z5 -> 2A 27AABCR0347P1Z3   4 inv  Rs 15,418
+```
+
+Redington files from three GSTINs under one PAN. The same 4 books invoices got
+compared against two different portal GSTINs and reported in full both times —
+a classic join-instead-of-group bug. It had already been shown to the user in
+the terminal report, printed as what looked like two separate, smaller
+findings rather than one double-counted one.
+
+**Why the aggregate figures were still right.** The bottom line never called
+`pan_conflicts()` — it summed `classify_unclaimed()`'s `other_registration`
+list directly, which groups each invoice into exactly one bucket, once. Only
+the *display* function that re-derived the breakdown independently was wrong.
+Two code paths computing the same number, one correct, one not, is exactly
+the situation where a demo can quietly ship the wrong one.
+
+**Fix:** stopped re-deriving from raw GSTIN buckets. `pan_conflicts()` now
+groups the already-correct, already-deduplicated `other_registration` lists
+by PAN, rather than joining raw books/portal GSTIN buckets against each other.
+Grouping can't double-count; joining did.
+
+Added `test_pan_conflicts_do_not_double_count`, which builds exactly this
+shape (one PAN, two portal GSTINs) and asserts the conflict total equals the
+bucket total to the paisa.
+
+**What I would have sent without catching it:** a document, going to a
+domain-expert tax advocate, showing ₹60,084 of money that doesn't exist —
+inflated by exactly the same error the summary document right next to it
+didn't have. That inconsistency between two documents about the same numbers
+is the kind of thing that costs the whole tool its credibility on one glance.
