@@ -333,3 +333,55 @@ single-character typo is *not* reported as a mismatch while a date and taxable
 difference *is*.
 
 Final: 18 tests, and the Partial Mismatch sheet went from 1 row to 35.
+
+---
+
+## #9 — I said the workbook was fixed. It still did not open.
+
+**Immediately after #8.** I had fixed the inline-string bug and the misplaced
+`<pane>`, verified both by unzipping the file and grepping the XML, written a
+test, and sent it. The practitioner's son replied: *"its not opening"*.
+
+My verification checked the **cells**. The corruption was in the **package**.
+
+Dumping every part found three more faults, any one of which is fatal:
+
+1. **`<cellXfs count="10">` containing 7 `<xf>` children.** Excel validates
+   declared counts against reality and rejects the file. This alone would
+   have stopped it opening regardless of anything else I fixed.
+2. **`docProps/app.xml`** declared in `[Content_Types].xml` as
+   `custom-properties+xml`, linked from `_rels/.rels` as `extended-properties`,
+   and carrying extended-properties content (`TitlesOfParts`) under the
+   custom-properties namespace with no `vt:` prefixes on `<vector>`,
+   `<variant>`, `<lpstr>`. Three ways wrong in one part.
+3. **`docProps/core.xml`** using `dc:created` / `dc:modified`. Those are not
+   Dublin Core elements; they must be `dcterms:` with `xsi:type="dcterms:W3CDTF"`.
+
+None of those three parts is required. So the fix was not to correct them but
+to **stop writing them**: the workbook now emits the minimal valid part set
+(content types, root rels, workbook, workbook rels, styles, sheets) and nothing
+else. Ten parts instead of fifteen. Theme, docProps and the empty per-sheet
+`.rels` files are all gone.
+
+**The real lesson is about verification, not XML.** I checked the thing I had
+just changed and declared the file good. Twice. The correct move after the
+first failure was to stop patching and validate the whole package against its
+own declarations.
+
+So `validate_package()` now does exactly that, and `write()` calls it before
+anything reaches disk -- a broken workbook cannot be written at all:
+
+  * every part parses as XML
+  * every content-type Override names a part that exists
+  * every part in the zip has a content type
+  * every relationship target resolves
+  * **every `count="N"` equals the real child count**
+  * every `<is>` cell carries `t="inlineStr"`, and no `<pane>` follows `</sheetData>`
+
+Each rule was then tested by deliberately reintroducing the corresponding bug
+into a good file and confirming the validator rejects it. All six are caught.
+
+**What I should have done differently:** treated "it does not open" as evidence
+that my model of the file was wrong, rather than assuming the one bug I had
+found was the only one. A validator written after the first failure would have
+caught the count mismatch immediately and saved the second round trip.
