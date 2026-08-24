@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .env
 *.db
+
+# Real client data (Heamons). Never goes to a public repo.
+milan/Data/

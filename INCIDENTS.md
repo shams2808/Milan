@@ -126,3 +126,98 @@ handles every distortion I know about. It says nothing about the ones I don't.
 Real GSTR-2A and Tally files from a practising tax advocate arrive **1
 September**, after his 31 August filing deadline. That is the first honest test
 this project will get, and the numbers will move.
+
+---
+
+## #5 — I reported ₹922,513 of "amount mismatches" that were my own arithmetic
+
+**First run on real client files.** 163 invoices came back as "matched but tax
+differs," net ₹922,513. The top rows looked absurd:
+
+```
+07AAICI4718C1ZR  1/2025-26     books 472,000.00   2A  72,000.00   delta +400,000.00
+07AAACS1679N1ZW  815/M         books  45,477.00   2A   6,937.20   delta  +38,539.80
+```
+
+Books claiming ₹472,000 of tax where the portal says ₹72,000 is not a
+data-entry error, it is a bug. And the delta was suspicious: in every case it
+equalled the invoice's *taxable value*.
+
+My Tally loader computed `tax = Gross Total − Value`. That reads correctly and
+is correct for a goods purchase. For a **service** purchase Tally leaves the
+`Value` column blank and puts the base amount in the expense ledger column
+instead:
+
+```
+F.A. AIRCON   Gross 20060   CGST 1530   SGST 1530   REPAIRING CHARGE PAID 18%: 17000
+```
+
+`Value` is blank, so my loader computed tax = 20060 − 0 = the whole invoice.
+
+The fix was to stop deriving tax at all and sum the actual GST columns,
+detected from the header. That needs care: `"Purchase IGST 18%"` is a purchase
+*ledger* holding the taxable base, not tax. A substring search for `IGST` would
+add the base into the tax and double it. The pattern anchors at the start of
+the header instead, so `CGST @9%` matches and `Purchase IGST 18%` does not.
+
+Verified on the real file: `gross == ledgers + tax + round-off` on 1,913 of
+1,915 rows (the two exceptions are Tally storing round-off unsigned), and the
+resulting tax matches GSTR-2A to the paisa.
+
+Amount mismatches fell from **163 (₹922,513) to 1 (₹72)**. Exact matches rose
+from 1,706 to 1,869.
+
+---
+
+## #6 — "542 unclaimed invoices" was four different problems added together
+
+With the tax bug fixed, the report still claimed **542 invoices / ₹2,013,176
+sitting in 2A but not in the books**. For a company with 1,913 purchases that
+is not credible, and the practitioner's son said so immediately.
+
+Every row was accounted for arithmetically (1874 + 542 = 2418). The failure was
+diagnostic: four unrelated situations were being summed into one headline.
+
+Breaking the pile down by *why* each row was unmatched:
+
+| Cause | Invoices | Value |
+|---|---|---|
+| Supplier absent from the purchase register entirely | **428** | ₹822,537 |
+| Supplier is in the books, this invoice is not | 93 | ₹667,342 |
+| Same PAN, different GSTIN | 21 | ₹523,297 |
+
+The 428 gave themselves away by name: GOVERNMENT EMARKETPLACE, AMERICAN
+AIRLINES, KOTAK MAHINDRA BANK, KOTAK LIFE INSURANCE, SAKSHI 3PL, JAIN TIMBER
+TRADERS. 86% carried under ₹2,000 of tax.
+
+Those are **expenses**, not goods purchases — bank charges, insurance, air
+tickets, platform fees, freight. Tally books them as Journal or Payment
+vouchers. A **Purchase Register export contains only Purchase vouchers**, while
+GSTR-2A contains every inward supply. I had been comparing the whole against a
+subset and calling the difference unclaimed credit.
+
+The 21 were a second, separate bug: Ingram Micro bills from `27AABCT1296R1ZN`
+and `06AABCT1296R1ZR` — one PAN, two state registrations. My GSTIN-typo check
+only caught differences of 1–2 characters; a second state registration differs
+in three. Added a PAN-level conflict report (still never auto-matching across
+GSTINs — different registrations are legally different suppliers).
+
+**What changed.** The report no longer prints one number. Each pile is split by
+cause, each bucket says what to actually do, and the honest bottom line is:
+
+```
+  ITC confirmed against 2A           Rs 55,427,570
+  Claim before 30 Nov (98d)            Rs 667,342   [2a]
+  Reverse or chase supplier              Rs 28,713   [1a]
+  Fix ledger, then re-run               Rs 523,297   [1b+2b, same invoices]
+  Needs the full Day Book               Rs 822,537   [2c]
+```
+
+**What I would have shipped without this:** a tool that tells a tax advocate
+his client has ₹2,013,176 of unclaimed credit, when the defensible figure is
+₹667,342 and the rest is a wrong input file and a ledger mistake. He would have
+checked the first ten rows by hand, found bank charges, and never opened it
+again.
+
+The lesson repeats #1 and #2: the arithmetic was right every time. Only real
+data showed the arithmetic was answering the wrong question.

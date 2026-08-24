@@ -25,8 +25,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 # Tolerance on total tax when deciding two rows are the same invoice.
-# Rupee-level rounding differences between a supplier's system and Tally are
-# routine. ASSUMPTION: verify with the practitioner -- it may need to be 10.
+# Confirmed with the practitioner directly: Rs 1, not a guess.
 TAX_TOLERANCE = 1.0
 
 # How far apart invoice dates may be and still be considered the same invoice.
@@ -131,6 +130,15 @@ def tax_close(a: Invoice, b: Invoice, tol: float = TAX_TOLERANCE) -> bool:
 
 def date_close(a: Invoice, b: Invoice, days: int = DATE_TOLERANCE_DAYS) -> bool:
     return abs((a.inv_date - b.inv_date).days) <= days
+
+
+def pan(gstin: str) -> str:
+    """A GSTIN is 2 state digits + 10-char PAN + 3. Two GSTINs sharing a PAN
+    are the SAME legal entity registered in different states -- Ingram Micro
+    bills from 27 (Maharashtra) and 06 (Haryana) with one PAN. Those are
+    legally distinct registrations, so we never match across them; we report
+    the conflict so the books can be corrected."""
+    return gstin[2:12] if len(gstin) >= 12 else gstin
 
 
 def rupees(x: float) -> str:

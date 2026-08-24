@@ -9,7 +9,7 @@ from datetime import date
 
 from .core import Invoice, norm_loose, norm_strict
 from .match import _edit_distance, _is_coded, reconcile, AMOUNT, BYVALUE, EXACT
-from .run import evaluate, suspected_gstin_typos
+from .report import evaluate, suspected_gstin_typos
 from .synth import build_year
 
 GST_A = "27AABCU9603R1ZM"
