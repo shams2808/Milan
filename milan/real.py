@@ -15,6 +15,7 @@ from .export import write_csv
 from .loaders import load_gstr2a, load_tally_purchase
 from .match import reconcile
 from .report import print_report
+from .workbook import write_workbook
 
 
 def main() -> None:
@@ -23,6 +24,7 @@ def main() -> None:
     ap.add_argument("tally", help="Tally Purchase Register .xlsx export")
     ap.add_argument("--show", type=int, default=8, help="rows per section")
     ap.add_argument("--csv", help="write every finding to this CSV for Excel")
+    ap.add_argument("--xlsx", help="write a 5-sheet workbook for review")
     args = ap.parse_args()
 
     gstr = load_gstr2a(args.gstr2a)
@@ -37,6 +39,10 @@ def main() -> None:
     if args.csv:
         n = write_csv(args.csv, tally, gstr, res)
         print(f"\n{n} findings written to {args.csv}")
+
+    if args.xlsx:
+        write_workbook(args.xlsx, tally, gstr, res)
+        print(f"Workbook written to {args.xlsx}")
     print()
 
 

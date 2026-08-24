@@ -75,10 +75,18 @@ class Workbook:
             cells: dict[str, str | None] = {}
             for c in row.findall(f"{_NS}c"):
                 col = _COL.match(c.get("r")).group()
-                v = c.find(f"{_NS}v")
-                val = v.text if v is not None else None
-                if c.get("t") == "s" and val is not None:
-                    val = self._sst[int(val)]
+                if c.get("t") == "inlineStr":
+                    # Inline strings live in <is><t>, not <v>. Portal and Tally
+                    # exports use the shared-string table, so this branch only
+                    # matters for round-tripping our own output -- which is
+                    # exactly why it needs to work.
+                    node = c.find(f"{_NS}is")
+                    val = "".join(t.text or "" for t in node.iter(f"{_NS}t")) if node is not None else None
+                else:
+                    v = c.find(f"{_NS}v")
+                    val = v.text if v is not None else None
+                    if c.get("t") == "s" and val is not None:
+                        val = self._sst[int(val)]
                 cells[col] = val
             yield cells
 

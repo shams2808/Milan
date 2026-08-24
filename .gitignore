@@ -5,3 +5,8 @@ __pycache__/
 
 # Real client data (Heamons). Never goes to a public repo.
 milan/Data/
+
+# Generated reconciliation output - may contain client data wherever it lands
+*.xlsx
+*.csv
+!milan/Data/.gitkeep

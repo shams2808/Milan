@@ -266,3 +266,70 @@ domain-expert tax advocate, showing ₹60,084 of money that doesn't exist —
 inflated by exactly the same error the summary document right next to it
 didn't have. That inconsistency between two documents about the same numbers
 is the kind of thing that costs the whole tool its credibility on one glance.
+
+---
+
+## #8 — a workbook that Excel would have refused to open, and a test that could not fail
+
+**Reviewing an Excel exporter built by a local agent.** The suite reported
+"15 passed" and the file was produced without error. Both signals were false.
+
+**The workbook was corrupt.** Every text cell was written as:
+
+```xml
+<c r="A1" s="1"><is><t>Supplier</t></is></c>
+```
+
+`<is>` is only valid when the cell carries `t="inlineStr"`. Without it a cell
+defaults to numeric, Excel finds no `<v>`, and declares the file damaged.
+**5,757 of 5,757 text cells were wrong** — every supplier name, GSTIN, invoice
+number and date in the workbook. Reading it back showed rows of bare numbers
+with every text column blank.
+
+The cause was structural, not a typo: `_cell_value_xml()` returned only the
+cell's *inner* XML, so by the time the value's type was known the opening
+`<c>` tag had already been written and the attribute could not be added. Fixed
+by returning `(type_attribute, inner_xml)` together.
+
+Second corruption in the same file: `<pane>` for frozen headers was emitted
+bare, after `</sheetData>`. The schema fixes worksheet child order — `<pane>`
+belongs inside `<sheetViews>`, *before* `<sheetData>`. Moved.
+
+**The test could not fail.** `test_workbook_totals_reconcile` never called
+`write_workbook`, never opened a file, and ended on:
+
+```python
+assert sheet2_total + sheet3_total + sheet4_total + sheet5_total >= 0
+```
+
+Sums of tax are always non-negative. It computed four totals and asserted
+nothing about any of them. A green suite that cannot detect a corrupt output
+file is worse than no suite, because it stops anyone looking.
+
+**Three logic faults underneath the corruption:**
+
+1. **The GST-number conflicts were a stub.** `_build_sheet4_partial_mismatch`
+   had `# Section B: PAN conflicts` followed immediately by `return rows`.
+   Ingram Micro's ₹5.2L — the single largest finding, and the one the
+   practitioner explicitly asked to see side by side — was in no sheet at all.
+2. **Sheets overlapped.** `other_registration` was written to "Not in Tally"
+   *and* belonged on the mismatch sheet; `supplier_absent` was split across two
+   sheets by a ₹2,000 threshold, so 368 rows appeared twice and 60 appeared
+   only in the wrong place. Sheet totals could not reconcile against the report.
+3. **The mismatch rule ignored most of the practitioner's criteria.** They
+   asked for taxable difference, tax difference, *major* bill-number difference
+   and bill-date difference. Taxable was never compared, bill-number never
+   compared, and dates were only checked on non-exact matches — so **7 of the 8
+   real date differences were invisible**, including an invoice dated 19 March
+   in 2A and 27 March in Tally (₹51,840), which is the kind of gap that moves a
+   credit into a different financial year. Output was also silently truncated
+   with `[:20]`.
+
+**Replaced with three tests that can fail:** one writes a real workbook, unzips
+it, asserts every `<is>` carries `t="inlineStr"` and that element order is
+legal, then reads it back and checks a supplier name survives; one asserts the
+sheets are disjoint and together cover every unmatched invoice; one pins that a
+single-character typo is *not* reported as a mismatch while a date and taxable
+difference *is*.
+
+Final: 18 tests, and the Partial Mismatch sheet went from 1 row to 35.

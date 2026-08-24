@@ -148,6 +148,111 @@ def test_matching_is_one_to_one():
     assert len({p.gstr.row_id for p in res.pairs}) == len(res.pairs)
 
 
+def test_workbook_sheets_are_disjoint_and_complete():
+    """Every unmatched invoice appears on exactly one sheet.
+
+    Replaces a test that could not fail: it never called write_workbook, never
+    opened the file, and its only assertion was that a sum of taxes is >= 0.
+    Meanwhile other_registration sat on two sheets and supplier_absent was
+    split across two more by a rupee threshold.
+    """
+    from .report import classify_ineligible, classify_unclaimed
+
+    tally, gstr, _ = build_year(n_invoices=300, seed=7)
+    res = reconcile(tally, gstr)
+    unclaimed = classify_unclaimed(res, tally)
+    ineligible = classify_ineligible(res, gstr)
+
+    sheets = {
+        "Not in Tally": [i.row_id for i in unclaimed.get("missing_invoice", [])],
+        "Not in 2A": [i.row_id for i in ineligible.get("not_filed", [])
+                      + ineligible.get("supplier_absent", [])],
+        "Other Ledgers": [i.row_id for i in unclaimed.get("supplier_absent", [])],
+        "Partial (conflicts)": [i.row_id for i in unclaimed.get("other_registration", [])
+                                + ineligible.get("other_registration", [])],
+    }
+    seen = {}
+    for name, ids in sheets.items():
+        for rid in ids:
+            assert rid not in seen, f"{rid} on both {seen[rid]} and {name}"
+            seen[rid] = name
+
+    every_unmatched = {i.row_id for i in res.only_tally} | {i.row_id for i in res.only_gstr}
+    assert set(seen) == every_unmatched, (
+        f"unplaced: {len(every_unmatched - set(seen))}, invented: {len(set(seen) - every_unmatched)}"
+    )
+
+
+def test_workbook_file_is_valid_and_readable():
+    """Write a real workbook and read it back.
+
+    Guards the corruption class of bug: 5,757 text cells were emitted as
+    <is><t>..</t></is> without t="inlineStr", and <pane> was written bare after
+    </sheetData>. Both make Excel declare the file corrupt. Neither is visible
+    unless something actually parses the output.
+    """
+    import re as _re
+    import tempfile
+    import zipfile
+    from .workbook import write_workbook
+    from .xlsx_lite import Workbook as Reader
+
+    tally, gstr, _ = build_year(n_invoices=200, seed=3)
+    res = reconcile(tally, gstr)
+    with tempfile.TemporaryDirectory() as d:
+        path = f"{d}/wb.xlsx"
+        write_workbook(path, tally, gstr, res)
+
+        with zipfile.ZipFile(path) as z:
+            for part in z.namelist():
+                if "worksheets/sheet" not in part or not part.endswith(".xml"):
+                    continue
+                xml = z.read(part).decode("utf-8")
+                for m in _re.finditer(r"<c [^>]*>(?=<is>)", xml):
+                    assert "inlineStr" in m.group(0), f"{part}: <is> without t=inlineStr"
+                assert not _re.search(r"</sheetData>\s*<pane", xml), f"{part}: bare <pane>"
+                if "<sheetViews>" in xml:
+                    assert xml.index("<sheetViews>") < xml.index("<sheetData>"), part
+
+        reader = Reader(path)
+        names = reader.sheet_names()
+        assert names[0] == "Summary" and "Partial Mismatch" in names
+
+        rows = list(reader.rows("Not in Tally"))
+        assert rows[0]["A"] == "Supplier", "header text must survive the round trip"
+        if len(rows) > 1:
+            assert rows[1]["A"], "supplier name must not come back blank"
+
+
+def test_partial_mismatch_ignores_single_character_typos():
+    """The practitioner said MAJOR bill-number differences. A one-character
+    typo is a match, not a mismatch, and must not clutter the sheet."""
+    from .workbook import partial_mismatches
+
+    t = _inv("TALLY", "2526021990")
+    g = _inv("2A", "252601990")
+    res = reconcile([t], [g])
+    assert len(res.pairs) == 1, "should still match"
+    assert partial_mismatches(res) == [], "one edit apart is not a mismatch"
+
+
+def test_partial_mismatch_catches_date_and_taxable_differences():
+    """Date and taxable-value differences were both criteria the practitioner
+    named, and neither was being checked at all."""
+    from .workbook import partial_mismatches
+
+    t = Invoice(gstin=GST_A, supplier="X", inv_no="0001", inv_date=date(2025, 6, 18),
+                taxable=5000.0, igst=1000.0, source="TALLY", row_id="t1")
+    g = Invoice(gstin=GST_A, supplier="X", inv_no="0001", inv_date=date(2025, 6, 10),
+                taxable=4000.0, igst=1000.0, source="2A", row_id="g1")
+    res = reconcile([t], [g])
+    mm = partial_mismatches(res)
+    assert len(mm) == 1
+    reasons = mm[0][1]
+    assert "Bill date" in reasons and "Taxable amount" in reasons, reasons
+    assert mm[0][4] == 8, "day delta"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
