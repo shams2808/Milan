@@ -99,6 +99,7 @@ class Invoice:
     sgst: float = 0.0
     cess: float = 0.0
     period: str = ""          # return period it landed in, e.g. "2024-05"
+    voucher_type: str = ""    # Tally side only: Purchase / Journal / Payment
     source: str = ""          # "2A" or "TALLY"
     row_id: str = ""
     truth_id: str = ""        # synthetic ground truth only; never read by matcher

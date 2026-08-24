@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 
+from .blocked import flag_all
 from .core import Invoice, pan
 from .match import AMOUNT, Result
 from .report import classify_ineligible, classify_unclaimed
@@ -39,11 +40,13 @@ _FIELDS = [
     "bucket", "finding", "action", "side", "gstin", "pan", "supplier",
     "invoice_no", "invoice_date", "taxable", "igst", "cgst", "sgst", "cess",
     "tax", "counterpart_gstin", "counterpart_tax", "tax_difference",
+    "s17_5_clause", "s17_5_label", "s17_5_exception",
 ]
 
 
-def _row(bucket: str, side: str, inv: Invoice, **extra) -> dict:
+def _row(bucket: str, side: str, inv: Invoice, flags: dict | None = None, **extra) -> dict:
     finding, action = ACTIONS[bucket]
+    flag = (flags or {}).get(inv.row_id)
     row = {
         "bucket": bucket,
         "finding": finding,
@@ -63,6 +66,9 @@ def _row(bucket: str, side: str, inv: Invoice, **extra) -> dict:
         "counterpart_gstin": "",
         "counterpart_tax": "",
         "tax_difference": "",
+        "s17_5_clause": flag.clause if flag else "",
+        "s17_5_label": flag.label if flag else "",
+        "s17_5_exception": flag.exception if flag else "",
     }
     row.update(extra)
     return row
@@ -76,24 +82,23 @@ def write_csv(path: str, tally: list[Invoice], gstr: list[Invoice], res: Result)
     """
     ineligible = classify_ineligible(res, gstr)
     unclaimed = classify_unclaimed(res, tally)
+    flags = flag_all(tally + gstr)
 
     rows: list[dict] = []
-    for inv in ineligible.get("not_filed", []):
-        rows.append(_row("1a", "TALLY", inv))
-    for inv in ineligible.get("other_registration", []):
-        rows.append(_row("1b", "TALLY", inv))
-    for inv in ineligible.get("supplier_absent", []):
-        rows.append(_row("1c", "TALLY", inv))
-    for inv in unclaimed.get("missing_invoice", []):
-        rows.append(_row("2a", "2A", inv))
-    for inv in unclaimed.get("other_registration", []):
-        rows.append(_row("2b", "2A", inv))
-    for inv in unclaimed.get("supplier_absent", []):
-        rows.append(_row("2c", "2A", inv))
+    for bucket, side, invs in (
+        ("1a", "TALLY", ineligible.get("not_filed", [])),
+        ("1b", "TALLY", ineligible.get("other_registration", [])),
+        ("1c", "TALLY", ineligible.get("supplier_absent", [])),
+        ("2a", "2A", unclaimed.get("missing_invoice", [])),
+        ("2b", "2A", unclaimed.get("other_registration", [])),
+        ("2c", "2A", unclaimed.get("supplier_absent", [])),
+    ):
+        for inv in invs:
+            rows.append(_row(bucket, side, inv, flags))
 
     for p in res.pairs:
         if p.stage == AMOUNT:
-            rows.append(_row("amt", "TALLY", p.tally,
+            rows.append(_row("amt", "TALLY", p.tally, flags,
                              counterpart_gstin=p.gstr.gstin,
                              counterpart_tax=f"{p.gstr.tax:.2f}",
                              tax_difference=f"{p.tax_delta:.2f}"))

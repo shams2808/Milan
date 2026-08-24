@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date
 
+from .blocked import flag_all
 from .core import Invoice, pan, rupees
 from .match import AMOUNT, Result
 
@@ -208,6 +209,30 @@ def print_report(tally: list[Invoice], gstr: list[Invoice], res: Result, *, show
         print("    Not auto-matched: different GSTINs are different registrations.")
         for p, bg, pg, n, v in conflicts[:show]:
             print(f"    PAN {p}   books {bg}  ->  2A {pg}   {n} inv  {rupees(v)}")
+
+    # s.17(5) review candidates. Flagged, never excluded from any total --
+    # whether a credit is blocked is a legal call the practitioner makes.
+    flags = flag_all(tally + res.only_gstr)
+    if flags:
+        rows = [i for i in tally + res.only_gstr if i.row_id in flags]
+        claimed = [i for i in rows if i.source == "TALLY"]
+        print(f"\n{'=' * 78}")
+        print(f"POSSIBLY BLOCKED UNDER s.17(5)   {len(rows)} invoices, {rupees(_total(rows))}")
+        print(f"{'=' * 78}")
+        if claimed:
+            print(f"  {len(claimed)} of these are ALREADY CLAIMED ({rupees(_total(claimed))}) -- live exposure.")
+        print("  Flagged for review, not excluded. s.17(5) turns on facts not in these")
+        print("  files: whether a repair was capitalised, whether insurance was")
+        print("  obligatory, whether a works contract fed another.")
+        grouped: dict[str, list] = defaultdict(list)
+        for i in rows:
+            f = flags[i.row_id]
+            grouped[f"{f.clause}  {f.label}"].append(i)
+        for k, items in sorted(grouped.items(), key=lambda x: -_total(x[1])):
+            f = flags[items[0].row_id]
+            print(f"\n  {k}   {len(items)} inv  {rupees(_total(items))}")
+            print(f"      exception: {f.exception}")
+            _show_suppliers(items, 3, indent="      ")
 
     if res.dupes_tally:
         n = sum(len(d) - 1 for d in res.dupes_tally)

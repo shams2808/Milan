@@ -125,12 +125,50 @@ def load_gstr2a(path: str) -> list[Invoice]:
     return out
 
 
-def load_tally_purchase(path: str) -> list[Invoice]:
-    """The Purchase Register export. Filters to rows whose Voucher Type
-    contains 'purchase' -- this file's sheet is pre-filtered already, but a
-    Day Book export from a different client would not be, so the filter stays
-    rather than assuming every export arrives pre-filtered.
+# Voucher types that represent an INWARD supply (something bought). Sales,
+# Receipt and Credit Note are outward -- their GSTINs are customers, and
+# reconciling those against GSTR-2A would be meaningless.
+#
+# The expenses that never reach a Purchase Register -- bank charges, insurance,
+# platform fees, air tickets -- are booked as Journal or Payment vouchers.
+# Those registers can be exported separately and passed alongside the Purchase
+# Register; see load_tally().
+INWARD_VOUCHERS = ("purchase", "journal", "payment", "debit note", "expense")
+
+OUTWARD_VOUCHERS = ("sales", "receipt", "credit note", "sale ")
+
+
+def load_tally(paths: list[str], *, inward_only: bool = True) -> tuple[list[Invoice], dict[str, int]]:
+    """Load and merge several Tally register exports.
+
+    A practitioner cannot always produce one unfiltered Day Book, but can
+    usually export a Purchase Register, a Journal Register and a Payment
+    Register separately. Merging them here is what lets the expense-side
+    inward supplies be reconciled at all.
+
+    Returns (invoices, voucher_type_counts) so the caller can show which
+    voucher types were actually included -- silently dropping half a file
+    would be the worst possible failure mode for this tool.
     """
+    merged: list[Invoice] = []
+    seen: dict[str, int] = {}
+    for path in paths:
+        rows, counts = _load_one_tally(path, inward_only=inward_only)
+        merged.extend(rows)
+        for k, v in counts.items():
+            seen[k] = seen.get(k, 0) + v
+
+    # The same voucher can appear in two registers (a Purchase Register and a
+    # Day Book that contains it). Same supplier, same invoice, same tax, same
+    # date is the same document, not a genuine duplicate purchase.
+    unique: dict[tuple, Invoice] = {}
+    for inv in merged:
+        key = (inv.gstin, inv.strict, round(inv.tax, 2), inv.inv_date)
+        unique.setdefault(key, inv)
+    return list(unique.values()), seen
+
+
+def _load_one_tally(path: str, *, inward_only: bool = True) -> tuple[list[Invoice], dict[str, int]]:
     wb = Workbook(path)
     sheet = next(
         (n for n in wb.sheet_names() if "purchase" in n.lower() or "day book" in n.lower()),
@@ -155,15 +193,22 @@ def load_tally_purchase(path: str) -> list[Invoice]:
 
     header_seen = False
     out = []
+    counts: dict[str, int] = {}
     for i, r in enumerate(rows):
         if r is header_row:
             header_seen = True
             continue
         if not header_seen:
             continue
-        vtype = (r.get(by_field["voucher_type"]) or "").strip().lower()
-        if "purchase" not in vtype:
-            continue
+        vtype_raw = (r.get(by_field["voucher_type"]) or "").strip()
+        vtype = vtype_raw.lower()
+        if vtype_raw:
+            counts[vtype_raw] = counts.get(vtype_raw, 0) + 1
+        if inward_only:
+            if any(o in vtype for o in OUTWARD_VOUCHERS):
+                continue
+            if not any(w in vtype for w in INWARD_VOUCHERS):
+                continue
         gstin = (r.get(by_field["gstin"]) or "").strip().upper()
         date_raw = r.get(by_field["date"])
         if not gstin or not date_raw:
@@ -191,9 +236,18 @@ def load_tally_purchase(path: str) -> list[Invoice]:
                 sgst=round(parts["sgst"], 2),
                 cess=round(parts["cess"], 2),
                 source="TALLY",
+                voucher_type=vtype_raw,
                 row_id=f"TALLY{i:06d}",
             )
         )
     if not out:
-        raise ValueError(f"parsed 0 purchase rows from {path} -- header matched but no data rows found")
-    return out
+        raise ValueError(
+            f"parsed 0 inward rows from {path} -- header matched but nothing "
+            f"survived the voucher-type filter. Types seen: {sorted(counts)}"
+        )
+    return out, counts
+
+
+def load_tally_purchase(path: str) -> list[Invoice]:
+    """Single-file convenience wrapper, kept for the tests and simple runs."""
+    return load_tally([path])[0]
