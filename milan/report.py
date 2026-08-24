@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date
 
-from .blocked import flag_all
+from .blocked import flag_all, unflagged_suppliers
 from .core import Invoice, pan, rupees
 from .match import AMOUNT, Result
 
@@ -184,12 +184,10 @@ def print_report(tally: list[Invoice], gstr: list[Invoice], res: Result, *, show
     if ab:
         small = [g for g in ab if g.tax < SMALL_TAX]
         print(f"\n  [2c] SUPPLIER NOT IN THE PURCHASE REGISTER    {len(ab):>4} inv  {rupees(_total(ab)):>13}")
-        print(f"       {len(small)} of these ({len(small) / len(ab):.0%}) are under {rupees(SMALL_TAX)} tax.")
-        print("       A Purchase Register holds only Purchase vouchers. Bank charges,")
-        print("       insurance, air tickets and platform fees are booked as Journal or")
-        print("       Payment vouchers, so they can never appear here however correctly")
-        print("       they were recorded. Re-export the full Day Book to resolve this")
-        print("       bucket -- until then it is unverified, not unclaimed.")
+        print(f"       {len(small)} of these ({len(small) / len(ab):.0%}) are under {rupees(SMALL_TAX)} tax --")
+        print("       consistent with the practitioner's read: nominal amounts, already")
+        print("       reconciled through separate ledgers (bank charges, insurance,")
+        print("       platform fees). OUT OF SCOPE for this tool by design, not a gap.")
         _show_suppliers(ab, show)
 
     # --- findings that are not simply "missing" -----------------------------
@@ -234,6 +232,19 @@ def print_report(tally: list[Invoice], gstr: list[Invoice], res: Result, *, show
             print(f"      exception: {f.exception}")
             _show_suppliers(items, 3, indent="      ")
 
+    # Suppliers the rules could not classify at all -- not sent to an LLM.
+    # The practitioner's instruction: no guessing here, a manual list to check.
+    unclassified = unflagged_suppliers(mi, flags)
+    if unclassified:
+        print(f"\n{'=' * 78}")
+        print(f"MANUAL REVIEW  {len(unclassified)} suppliers in [2a], trade name alone")
+        print("does not say what was bought -- not run through s.17(5) rules, no AI guess")
+        print(f"{'=' * 78}")
+        for name, n, v in unclassified[:show]:
+            print(f"      {name[:44]:<44} {n:>3} inv  {rupees(v):>13}")
+        if len(unclassified) > show:
+            print(f"      ... {len(unclassified) - show} more")
+
     if res.dupes_tally:
         n = sum(len(d) - 1 for d in res.dupes_tally)
         v = sum(d[0].tax * (len(d) - 1) for d in res.dupes_tally)
@@ -254,7 +265,7 @@ def print_report(tally: list[Invoice], gstr: list[Invoice], res: Result, *, show
     # NOT orr + orr2: those are the same invoices seen from each side, and
     # adding them double-counts the money. The portal side is the ITC at stake.
     print(f"  Fix ledger, then re-run           {rupees(_total(orr2)):>14}   [1b+2b, same invoices]")
-    print(f"  Needs the full Day Book           {rupees(_total(ab)):>14}   [2c]")
+    print(f"  Out of scope (confirmed nominal)  {rupees(_total(ab)):>14}   [2c, not counted above]")
 
 
 def suspected_gstin_typos(res: Result) -> list[tuple[Invoice, Invoice]]:
