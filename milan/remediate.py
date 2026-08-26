@@ -32,7 +32,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 
-from .core import Invoice, pan, rupees
+from .core import Invoice, indian_number_format, pan, rupees
 from .match import Result
 from .report import ITC_DEADLINE, classify_ineligible, classify_unclaimed, pan_conflicts
 
@@ -59,12 +59,13 @@ class Action:
 
 def _fact_numbers(facts: dict) -> set[str]:
     """Every number a draft is allowed to contain, in the forms it might be
-    written: 28713, 28713.00, 28,713, 28,713.00."""
+    written: 28713, 28713.00, 28,713, 28,713.00, 1,45,200, 1,45,200.00."""
     allowed: set[str] = set()
 
     def add(value):
         if isinstance(value, (int, float)):
-            for text in (f"{value:.2f}", f"{value:,.2f}", f"{value:,.0f}", f"{value:.0f}"):
+            for text in (f"{value:.2f}", f"{value:,.2f}", f"{value:,.0f}", f"{value:.0f}",
+                         indian_number_format(value, 2), indian_number_format(value, 0)):
                 allowed.add(text)
                 allowed.add(text.replace(",", ""))
         elif isinstance(value, str):

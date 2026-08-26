@@ -211,6 +211,41 @@ def pan(gstin: str) -> str:
     return gstin[2:12] if len(gstin) >= 12 else gstin
 
 
-def rupees(x: float) -> str:
-    return f"Rs {x:,.0f}"
+def indian_number_format(x: float | int, decimals: int = 0) -> str:
+    """Format a number into the Indian numbering system (Lakhs and Crores).
+    e.g., 55427570 -> 5,54,27,570
+          1452051.68 -> 14,52,051.68 (decimals=2) or 14,52,052 (decimals=0)
+    """
+    if x is None:
+        return "0"
+    sign = "-" if x < 0 else ""
+    x = abs(float(x))
+    if decimals > 0:
+        formatted = f"{x:.{decimals}f}"
+        int_part, dec_part = formatted.split(".")
+    else:
+        int_part = str(int(round(x)))
+        dec_part = ""
+
+    if len(int_part) <= 3:
+        res = int_part
+    else:
+        last3 = int_part[-3:]
+        rest = int_part[:-3]
+        groups = []
+        while len(rest) > 2:
+            groups.insert(0, rest[-2:])
+            rest = rest[:-2]
+        if rest:
+            groups.insert(0, rest)
+        res = ",".join(groups) + "," + last3
+
+    if dec_part:
+        return f"{sign}{res}.{dec_part}"
+    return f"{sign}{res}"
+
+
+def rupees(x: float, decimals: int = 0) -> str:
+    return f"Rs {indian_number_format(x, decimals=decimals)}"
+
 

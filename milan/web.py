@@ -18,7 +18,7 @@ from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from .core import rupees
+from .core import indian_number_format, rupees
 from .export import write_csv
 from .loaders import load_gstr2a, load_gstr3b, load_tally
 from .match import reconcile
@@ -42,6 +42,7 @@ _CSS = """
   --primary-border: #a7f3d0;
   --accent: #4f46e5;
   --accent-light: #eef2ff;
+  --accent-border: #c7d2fe;
   --text-main: #0f172a;
   --text-muted: #64748b;
   --bg: #f8fafc;
@@ -148,15 +149,52 @@ body {
   fill: #059669;
 }
 
-/* Card */
+/* Section Header Dividers */
+.section-divider {
+  margin: 40px 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 12px;
+}
+
+.section-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.section-badge {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: #e2e8f0;
+  color: #334155;
+}
+.section-badge.two-way { background: #dcfce7; color: #15803d; }
+.section-badge.three-way { background: #ede9fe; color: #6d28d9; }
+
+/* Cards */
 .card {
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 30px;
+  padding: 26px 28px;
   margin-bottom: 24px;
   box-shadow: var(--shadow);
   transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.card.highlight-3b {
+  border-color: #c7d2fe;
+  background: linear-gradient(180deg, #ffffff 0%, #fafbff 100%);
 }
 
 .card-title {
@@ -172,7 +210,7 @@ body {
 .card-desc {
   font-size: 14px;
   color: var(--text-muted);
-  margin-bottom: 22px;
+  margin-bottom: 20px;
 }
 
 /* Upload Dropzones */
@@ -807,26 +845,35 @@ _RESULT_HTML = """<!doctype html>
         </div>
       </div>
       <div class="badge-local">
-        Table 8 Diagnostic
+        Cascade Diagnostic
       </div>
     </header>
 
-    <!-- Top Metric Grid -->
+    <!-- SECTION 1: 2-Way GSTR-2A vs Purchase Register -->
+    <div class="section-divider">
+      <div class="section-title">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+        Section 1: GSTR-2A (Portal) vs. Purchase Register (Tally)
+      </div>
+      <span class="section-badge two-way">2-Way Reconciliation</span>
+    </div>
+
+    <!-- 2-Way Metric Grid -->
     <div class="hero-metric-grid">
       <div class="metric-card">
-        <div class="metric-label">2A Available</div>
+        <div class="metric-label">2A Available (Portal)</div>
         <div class="metric-val">__TOTAL_2A__</div>
         <div class="metric-sub">__GSTR_ROWS__ Inward Bills</div>
       </div>
       <div class="metric-card">
-        <div class="metric-label">Tally Booked</div>
+        <div class="metric-label">Tally Booked (Books)</div>
         <div class="metric-val">__TOTAL_TALLY__</div>
         <div class="metric-sub">__TALLY_ROWS__ Inward Bills</div>
       </div>
       <div class="metric-card accent">
-        <div class="metric-label">ITC Confirmed</div>
+        <div class="metric-label">Matched ITC Confirmed</div>
         <div class="metric-val">__MATCHED_TAX__</div>
-        <div class="metric-sub">__MATCHED__ Exact Pairs</div>
+        <div class="metric-sub">__MATCHED__ Exact Invoice Pairs</div>
       </div>
       <div class="metric-card alert">
         <div class="metric-label">Unclaimed in Books</div>
@@ -848,13 +895,11 @@ _RESULT_HTML = """<!doctype html>
       </div>
     </div>
 
-    __THREE_WAY_CARD__
-
     <!-- Findings Breakdown Table -->
     <div class="card">
       <div class="card-title">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-        Reconciliation Findings by Cause
+        Categorized Findings by Cause (2A ↔ Books)
       </div>
       <div class="card-desc">Every discrepancy classified by actionable tax remedy rather than raw unassigned totals.</div>
       <table>
@@ -868,7 +913,17 @@ _RESULT_HTML = """<!doctype html>
       </table>
     </div>
 
-    __MONTHLY_CARD__
+    <!-- SECTION 2: Three-Way ITC Position & GSTR-3B Timing Analysis -->
+    __THREE_WAY_SECTION__
+
+    <!-- SECTION 3: Review Exports -->
+    <div class="section-divider">
+      <div class="section-title">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        Section 3: Review Exports & Working Papers
+      </div>
+      <span class="section-badge">Downloads</span>
+    </div>
 
     <!-- Download Action Card -->
     <div class="action-card">
@@ -956,30 +1011,13 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
-    def handle_one_request(self):
-        """A browser that navigates away mid-upload drops the socket, and the
-        write that follows raises ConnectionAbortedError (WinError 10053).
-        That is the client's normal behaviour, not a server fault, so it is
-        swallowed here instead of dumping a traceback the practitioner reads
-        as a crash."""
-        try:
-            super().handle_one_request()
-        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
-            self.close_connection = True
-
-    def handle_error(self, request, client_address):
-        pass
-
     def _send(self, body: str, status: int = 200) -> None:
         payload = body.encode("utf-8")
-        try:
-            self.send_response(status)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
-            self.close_connection = True
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def do_GET(self) -> None:
         if self.path == "/":
@@ -999,15 +1037,12 @@ class Handler(BaseHTTPRequestHandler):
                 err_page = _ERROR_HTML.replace("/*INJECT_CSS*/", _CSS).replace("__MSG__", "File not found.")
                 return self._send(err_page, 404)
             data = path.read_bytes()
-            try:
-                self.send_response(200)
-                self.send_header("Content-Type", "application/octet-stream")
-                self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-            except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
-                self.close_connection = True   # cancelled download; not an error
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
             return
         err_page = _ERROR_HTML.replace("/*INJECT_CSS*/", _CSS).replace("__MSG__", "Page not found.")
         self._send(err_page, 404)
@@ -1095,8 +1130,7 @@ def _result_page(token: str, tally, gstr, res, gstr3b=None) -> str:
             "Reconciled via other ledgers", "claim"),
     ])
 
-    three_way_card = ""
-    monthly_card = ""
+    three_way_section = ""
     sheet_desc = "Five sheets: Summary, Not in Tally, Not in 2A, Partial Mismatch, and Other Ledgers."
 
     total_2a_val = rupees(sum(i.tax for i in gstr))
@@ -1105,20 +1139,36 @@ def _result_page(token: str, tally, gstr, res, gstr3b=None) -> str:
 
     if gstr3b is not None:
         twp = compute_three_way_position(tally, gstr, res, gstr3b)
-        sheet_desc = "Six sheets: Summary, Not in Tally, Not in 2A, Partial Mismatch, Other Ledgers, and ITC Position."
+        sheet_desc = "Six sheets: Summary, Not in Tally, Not in 2A, Partial Mismatch, Other Ledgers, and dedicated <strong>ITC Position</strong> sheet."
 
-        three_way_card = f"""
-    <!-- Three-Way Table 8 Card -->
-    <div class="card">
-      <div class="card-title">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
-        Three-Way ITC Position (Table 8 Shape)
+        m_rows = []
+        for mp in twp.monthly:
+            d_class = "delta-pos" if mp.variance_3b_2a >= 0 else "delta-neg"
+            d_prefix = "+Rs " if mp.variance_3b_2a >= 0 else "-Rs "
+            d_str = f"{d_prefix}{indian_number_format(abs(mp.variance_3b_2a), 2)}"
+            m_rows.append(f"<tr><td><strong>{mp.month}</strong></td><td class=n>Rs {indian_number_format(mp.tax_2a_by_invoice_date, 2)}</td><td class=n>Rs {indian_number_format(mp.tax_2a_by_filing_period, 2)}</td><td class=n>Rs {indian_number_format(mp.tally_tax, 2)}</td><td class=n>Rs {indian_number_format(mp.gstr3b_claimed, 2)}</td><td class=\"n {d_class}\">{d_str}</td></tr>")
+
+        three_way_section = f"""
+    <!-- SECTION 2: 3-Way Reconciliation & 3B Analysis -->
+    <div class="section-divider">
+      <div class="section-title">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+        Section 2: Three-Way ITC Position & GSTR-3B Timing Analysis
       </div>
-      <div class="card-desc">Comprehensive reconciliation between GSTR-2A (Available), Tally (Booked), and GSTR-3B (Claimed).</div>
+      <span class="section-badge three-way">3-Way Statutory Audit</span>
+    </div>
+
+    <!-- Table 8 Position Progression Card -->
+    <div class="card highlight-3b">
+      <div class="card-title" style="color:#3730a3;">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+        Table 8 Reconciliation Progression (Available &rarr; Booked &rarr; Matched &rarr; Claimed)
+      </div>
+      <div class="card-desc">End-to-end statutory credit verification bridging portal availability, accounting books, and filed GSTR-3B returns.</div>
 
       <div class="hero-metric-grid" style="margin-bottom:18px;">
         <div class="metric-card">
-          <div class="metric-label">2A Available (Table 8A)</div>
+          <div class="metric-label">GSTR-2A Available (Table 8A)</div>
           <div class="metric-val">{rupees(twp.available_2a)}</div>
           <div class="metric-sub">Portal Inward Tax</div>
         </div>
@@ -1128,20 +1178,20 @@ def _result_page(token: str, tally, gstr, res, gstr3b=None) -> str:
           <div class="metric-sub">Books Inward Tax</div>
         </div>
         <div class="metric-card accent">
-          <div class="metric-label">Matched Confirmed</div>
+          <div class="metric-label">Matched ITC Confirmed</div>
           <div class="metric-val">{rupees(twp.matched_tax)}</div>
-          <div class="metric-sub">Eligible Backed Credit</div>
+          <div class="metric-sub">100% Verified Credit</div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">3B Claimed (Table 4A)</div>
+          <div class="metric-label">GSTR-3B Claimed (Table 4A)</div>
           <div class="metric-val">{rupees(twp.claimed_3b)}</div>
-          <div class="metric-sub">Filed Monthly Returns</div>
+          <div class="metric-sub">Filed Monthly Claims</div>
         </div>
       </div>
 
       <div class="highlight-banner" style="margin-bottom:18px;background:linear-gradient(135deg,#eff6ff,#dbeafe);border-color:#bfdbfe;">
         <div class="hb-left">
-          <span class="hb-tag" style="color:#1d4ed8;">Verified ITC Under-Claim Finding</span>
+          <span class="hb-tag" style="color:#1d4ed8;">Crucial Statutory Finding · Under-Claimed ITC</span>
           <div class="hb-title" style="color:#1e40af;">{rupees(twp.matched_unclaimed)}</div>
           <div class="hb-desc" style="color:#334155;">Invoices 100% matched in both Tally and 2A where credit was legally available, but omitted from GSTR-3B monthly filings.</div>
         </div>
@@ -1151,25 +1201,18 @@ def _result_page(token: str, tally, gstr, res, gstr3b=None) -> str:
         </div>
       </div>
 
-      <div class="info-callout">
+      <div class="info-callout" style="border-left-color:#4f46e5;background:#f5f7ff;">
         <strong>The Honesty Caveat:</strong> GSTR-3B Table 4A includes imports, ISD, and reverse-charge credits that do not appear in GSTR-2A's B2B section. This summary does not break those out, so part of the <strong>{rupees(twp.gap_2a_3b)}</strong> total gap between 2A and 3B is legitimately unreconcilable from these files alone.
       </div>
-    </div>"""
+    </div>
 
-        m_rows = []
-        for mp in twp.monthly:
-            d_class = "delta-pos" if mp.variance_3b_2a >= 0 else "delta-neg"
-            d_str = f"+Rs {mp.variance_3b_2a:,.2f}" if mp.variance_3b_2a >= 0 else f"-Rs {abs(mp.variance_3b_2a):,.2f}"
-            m_rows.append(f"<tr><td><strong>{mp.month}</strong></td><td class=n>Rs {mp.tax_2a_by_invoice_date:,.2f}</td><td class=n>Rs {mp.tax_2a_by_filing_period:,.2f}</td><td class=n>Rs {mp.tally_tax:,.2f}</td><td class=n>Rs {mp.gstr3b_claimed:,.2f}</td><td class=\"n {d_class}\">{d_str}</td></tr>")
-
-        monthly_card = f"""
-    <!-- Month-by-Month Timing Card -->
+    <!-- Month-by-Month Timing Schedule -->
     <div class="card">
       <div class="card-title">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-        Month-by-Month Timing Schedule
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        Month-by-Month Timing Schedule (2A vs Tally vs 3B)
       </div>
-      <div class="card-desc">Exposes credit timing differences &mdash; comparing invoice dates vs supplier filing periods vs 3B claims.</div>
+      <div class="card-desc">Exposes credit timing lags &mdash; comparing invoice dates vs supplier filing periods vs 3B claims.</div>
       <table>
         <tr>
           <th>Month</th>
@@ -1194,9 +1237,8 @@ def _result_page(token: str, tally, gstr, res, gstr3b=None) -> str:
     res_page = res_page.replace("__CLAIM__", rupees(total(claim)))
     res_page = res_page.replace("__CLAIM_N__", str(len(claim)))
     res_page = res_page.replace("__DAYS__", str((ITC_DEADLINE - date.today()).days))
-    res_page = res_page.replace("__THREE_WAY_CARD__", three_way_card)
     res_page = res_page.replace("__ROWS__", rows)
-    res_page = res_page.replace("__MONTHLY_CARD__", monthly_card)
+    res_page = res_page.replace("__THREE_WAY_SECTION__", three_way_section)
     res_page = res_page.replace("__SHEET_DESC__", sheet_desc)
 
     return res_page

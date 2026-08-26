@@ -23,6 +23,7 @@ from .core import (
     MonthPosition,
     NUM_TO_MONTH,
     ThreeWayPosition,
+    indian_number_format,
     pan,
     rupees,
 )
@@ -229,9 +230,10 @@ def print_report(
         print(f"\n{'=' * 78}")
         print(f"AMOUNT MISMATCH  {len(amt)} invoices matched but tax differs, net {rupees(net)}")
         for p in sorted(amt, key=lambda p: -abs(p.tax_delta))[:show]:
+            d_sign = "+" if p.tax_delta >= 0 else ""
             print(f"    {p.tally.gstin}  {p.tally.inv_no:<20} "
-                  f"books {p.tally.tax:>10,.2f}   2A {p.gstr.tax:>10,.2f}   "
-                  f"delta {p.tax_delta:>+10,.2f}")
+                  f"books {indian_number_format(p.tally.tax, 2):>12}   2A {indian_number_format(p.gstr.tax, 2):>12}   "
+                  f"delta {d_sign + indian_number_format(p.tax_delta, 2):>12}")
 
     conflicts = pan_conflicts(res, tally, gstr)
     if conflicts:
@@ -412,10 +414,11 @@ def print_three_way_report(pos: ThreeWayPosition, gstr3b: GSTR3BSummary | None =
     print(f"\n{'=' * 78}")
     print("MONTH-BY-MONTH TIMING SCHEDULE")
     print(f"{'=' * 78}")
-    print(f"{'Month':<10} | {'2A (Inv Date)':>13} | {'2A (Filing Mo)':>13} | {'Tally Booked':>13} | {'3B Claimed':>13} | {'Timing Diff':>13}")
-    print("-" * 78)
+    print(f"{'Month':<10} | {'2A (Inv Date)':>14} | {'2A (Filing Mo)':>14} | {'Tally Booked':>14} | {'3B Claimed':>14} | {'Timing Diff':>14}")
+    print("-" * 83)
     for mp in pos.monthly:
-        print(f"{mp.month:<10} | {mp.tax_2a_by_invoice_date:>13,.2f} | {mp.tax_2a_by_filing_period:>13,.2f} | {mp.tally_tax:>13,.2f} | {mp.gstr3b_claimed:>13,.2f} | {mp.variance_3b_2a:>+13,.2f}")
+        d_str = ("+" if mp.variance_3b_2a >= 0 else "") + indian_number_format(mp.variance_3b_2a, 2)
+        print(f"{mp.month:<10} | {indian_number_format(mp.tax_2a_by_invoice_date, 2):>14} | {indian_number_format(mp.tax_2a_by_filing_period, 2):>14} | {indian_number_format(mp.tally_tax, 2):>14} | {indian_number_format(mp.gstr3b_claimed, 2):>14} | {d_str:>14}")
 
 
 def suspected_gstin_typos(res: Result) -> list[tuple[Invoice, Invoice]]:
