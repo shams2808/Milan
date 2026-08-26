@@ -253,6 +253,44 @@ def test_partial_mismatch_catches_date_and_taxable_differences():
     assert mm[0][4] == 8, "day delta"
 
 
+def test_draft_may_not_invent_or_round_a_figure():
+    """The guardrail that lets a model near a document a GST officer reads.
+
+    The practitioner's position on AI deciding anything was "our experience
+    tells us more than your AI model", which is correct and settles it: the
+    model writes prose, the figures are computed. A draft that rounds
+    Rs 28,713 to "approximately Rs 29,000" has invented a liability, so any
+    number not present in the computed facts is reported and the draft fails.
+    """
+    from .remediate import Action, verify_draft
+
+    a = Action(kind="chase_supplier", title="t", recipient="X",
+               facts={"invoice_count": 4, "total_tax": 15418.32,
+                      "supplier_name": "Redington"})
+
+    faithful = "We refer to 4 invoices totalling Rs 15,418.32 in tax."
+    assert verify_draft(a, faithful) == [], verify_draft(a, faithful)
+
+    assert verify_draft(a, "approximately Rs 29,000 in tax") == ["29,000"]
+    assert "7" in verify_draft(a, "4 invoices and 7 credit notes")
+
+
+def test_plan_makes_one_action_per_non_filing_supplier():
+    from .remediate import CHASE_SUPPLIER, plan
+
+    tally, gstr, _ = build_year(n_invoices=300, seed=7)
+    res = reconcile(tally, gstr)
+    actions = plan(res, tally, gstr)
+
+    chases = [a for a in actions if a.kind == CHASE_SUPPLIER]
+    from .report import classify_ineligible
+    expected = {(i.gstin, i.supplier) for i in classify_ineligible(res, gstr).get("not_filed", [])}
+    assert len(chases) == len(expected)
+    # Every figure quoted is the real one, so a draft can never exceed it.
+    for a in chases:
+        assert a.facts["total_tax"] == round(sum(i.tax for i in a.invoices), 2)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
