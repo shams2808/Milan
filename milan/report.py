@@ -16,7 +16,16 @@ from collections import defaultdict
 from datetime import date
 
 from .blocked import flag_all, unflagged_suppliers
-from .core import Invoice, pan, rupees
+from .core import (
+    FY_MONTHS,
+    GSTR3BSummary,
+    Invoice,
+    MonthPosition,
+    NUM_TO_MONTH,
+    ThreeWayPosition,
+    pan,
+    rupees,
+)
 from .match import AMOUNT, Result
 
 # Section 16(4): ITC for a financial year lapses on 30 November of the year
@@ -133,7 +142,14 @@ def _show_suppliers(rows: list[Invoice], show: int, indent: str = "      ") -> N
         print(f"{indent}... {len(listed) - show} more suppliers")
 
 
-def print_report(tally: list[Invoice], gstr: list[Invoice], res: Result, *, show: int = 5) -> None:
+def print_report(
+    tally: list[Invoice],
+    gstr: list[Invoice],
+    res: Result,
+    *,
+    show: int = 5,
+    gstr3b: GSTR3BSummary | None = None,
+) -> None:
     print(f"Tally purchase register : {len(tally):>5} rows")
     print(f"GSTR-2A                 : {len(gstr):>5} rows")
 
@@ -284,6 +300,122 @@ def print_report(tally: list[Invoice], gstr: list[Invoice], res: Result, *, show
     # adding them double-counts the money. The portal side is the ITC at stake.
     print(f"  Fix ledger, then re-run           {rupees(_total(orr2)):>14}   [1b+2b, same invoices]")
     print(f"  Out of scope (confirmed nominal)  {rupees(_total(ab)):>14}   [2c, not counted above]")
+    if gstr3b is not None:
+        twp = compute_three_way_position(tally, gstr, res, gstr3b)
+        print(f"  Matched but never claimed (in 3B) {rupees(twp.matched_unclaimed):>14}")
+        print_three_way_report(twp, gstr3b)
+
+
+def compute_three_way_position(
+    tally: list[Invoice],
+    gstr2a: list[Invoice],
+    res: Result,
+    gstr3b: GSTR3BSummary,
+) -> ThreeWayPosition:
+    """Three-way ITC position across GSTR-2A, Tally Books, and GSTR-3B.
+
+    Reconciles Available (2A) -> Booked (Tally) -> Matched -> Claimed (3B),
+    and computes month-by-month timing schedules.
+    """
+    def _month_of_date(d):
+        return NUM_TO_MONTH.get(d.month, "April")
+
+    def _month_of_fp(fp: str, default_date):
+        if not fp:
+            return _month_of_date(default_date)
+        fp_clean = fp.strip()
+        if len(fp_clean) == 6 and fp_clean.isdigit():
+            m_num = int(fp_clean[:2])
+            return NUM_TO_MONTH.get(m_num, _month_of_date(default_date))
+        for m in FY_MONTHS:
+            if fp_clean.lower().startswith(m[:3].lower()):
+                return m
+        return _month_of_date(default_date)
+
+    g2a_by_date: dict[str, float] = defaultdict(float)
+    g2a_by_fp: dict[str, float] = defaultdict(float)
+    tally_by_date: dict[str, float] = defaultdict(float)
+
+    for inv in gstr2a:
+        m_d = _month_of_date(inv.inv_date)
+        m_fp = _month_of_fp(inv.filing_period, inv.inv_date)
+        g2a_by_date[m_d] += inv.tax
+        g2a_by_fp[m_fp] += inv.tax
+
+    for inv in tally:
+        m_d = _month_of_date(inv.inv_date)
+        tally_by_date[m_d] += inv.tax
+
+    monthly_positions: list[MonthPosition] = []
+    for m in FY_MONTHS:
+        c_2a_d = round(g2a_by_date[m], 2)
+        c_2a_fp = round(g2a_by_fp[m], 2)
+        c_tally = round(tally_by_date[m], 2)
+        m_3b = gstr3b.months.get(m)
+        c_3b = round(m_3b.itc_non_rev if m_3b else 0.0, 2)
+        var = round(c_3b - c_2a_fp, 2)
+        monthly_positions.append(MonthPosition(
+            month=m,
+            tax_2a_by_invoice_date=c_2a_d,
+            tax_2a_by_filing_period=c_2a_fp,
+            tally_tax=c_tally,
+            gstr3b_claimed=c_3b,
+            variance_3b_2a=var,
+        ))
+
+    available_2a = round(sum(i.tax for i in gstr2a), 2)
+    booked_tally = round(sum(i.tax for i in tally), 2)
+    matched_tax = round(sum(p.gstr.tax for p in res.pairs), 2)
+    claimed_3b = round(gstr3b.total_itc_non_rev, 2)
+
+    return ThreeWayPosition(
+        available_2a=available_2a,
+        booked_tally=booked_tally,
+        matched_tax=matched_tax,
+        claimed_3b=claimed_3b,
+        matched_unclaimed=round(matched_tax - claimed_3b, 2),
+        gap_2a_3b=round(available_2a - claimed_3b, 2),
+        only_tally_tax=round(sum(i.tax for i in res.only_tally), 2),
+        only_2a_tax=round(sum(i.tax for i in res.only_gstr), 2),
+        monthly=monthly_positions,
+    )
+
+
+def print_three_way_report(pos: ThreeWayPosition, gstr3b: GSTR3BSummary | None = None) -> None:
+    print(f"\n{'=' * 78}")
+    print("THREE-WAY ITC POSITION (TABLE 8 SHAPE)")
+    print(f"{'=' * 78}")
+    print(f"  GSTR-2A Available (Table 8A)      {rupees(pos.available_2a):>14}")
+    print(f"  Tally Inward Booked               {rupees(pos.booked_tally):>14}")
+    print(f"  Matched ITC Confirmed             {rupees(pos.matched_tax):>14}")
+    print(f"  GSTR-3B Claimed (Table 4A)        {rupees(pos.claimed_3b):>14}")
+    print(f"  {'-' * 76}")
+    print(f"  MATCHED BUT NEVER CLAIMED         {rupees(pos.matched_unclaimed):>14}")
+    print(f"  GSTR-2A vs GSTR-3B Total Gap       {rupees(pos.gap_2a_3b):>14}")
+    print(f"{'=' * 78}")
+    print("ANALYSIS OF GAPS")
+    print(f"{'=' * 78}")
+    print(f"  * Matched but never claimed: {rupees(pos.matched_unclaimed)}")
+    print("    Invoices verified in both Tally and GSTR-2A where ITC was eligible,")
+    print("    but total credit claimed in GSTR-3B monthly returns was lower.")
+    print(f"  * In Tally, not in 2A: {rupees(pos.only_tally_tax)}")
+    print("    Invoices booked in Tally but missing from GSTR-2A (supplier unfiled,")
+    print("    wrong GSTIN, or late filing in subsequent financial year).")
+    print(f"  * In 2A, not in Tally: {rupees(pos.only_2a_tax)}")
+    print("    Available portal credits never booked in purchase register.")
+    print()
+    print("HONESTY CAVEAT ON GSTR-2A vs GSTR-3B GAP:")
+    print(f"  GSTR-3B Table 4A includes imports, ISD, and reverse-charge credits that")
+    print(f"  never appear in GSTR-2A B2B section. This summary does not break those")
+    print(f"  out, so part of the {rupees(pos.gap_2a_3b)} gap is legitimately unreconcilable")
+    print(f"  from these files alone.")
+    print(f"\n{'=' * 78}")
+    print("MONTH-BY-MONTH TIMING SCHEDULE")
+    print(f"{'=' * 78}")
+    print(f"{'Month':<10} | {'2A (Inv Date)':>13} | {'2A (Filing Mo)':>13} | {'Tally Booked':>13} | {'3B Claimed':>13} | {'Timing Diff':>13}")
+    print("-" * 78)
+    for mp in pos.monthly:
+        print(f"{mp.month:<10} | {mp.tax_2a_by_invoice_date:>13,.2f} | {mp.tax_2a_by_filing_period:>13,.2f} | {mp.tally_tax:>13,.2f} | {mp.gstr3b_claimed:>13,.2f} | {mp.variance_3b_2a:>+13,.2f}")
 
 
 def suspected_gstin_typos(res: Result) -> list[tuple[Invoice, Invoice]]:

@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 
 from .export import write_csv
-from .loaders import load_gstr2a, load_tally_purchase
+from .loaders import load_gstr2a, load_gstr3b, load_tally_purchase
 from .match import reconcile
 from .report import print_report
 from .workbook import write_workbook
@@ -22,26 +22,31 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("gstr2a", help="GSTR-2A annual summary .xlsx from the portal")
     ap.add_argument("tally", help="Tally Purchase Register .xlsx export")
+    ap.add_argument("--gstr3b", help="GSTR-3B monthly summary .xlsx export")
     ap.add_argument("--show", type=int, default=8, help="rows per section")
     ap.add_argument("--csv", help="write every finding to this CSV for Excel")
-    ap.add_argument("--xlsx", help="write a 5-sheet workbook for review")
+    ap.add_argument("--xlsx", help="write review workbook (6 sheets if GSTR-3B supplied)")
     args = ap.parse_args()
 
     gstr = load_gstr2a(args.gstr2a)
     tally = load_tally_purchase(args.tally)
+    gstr3b = load_gstr3b(args.gstr3b) if args.gstr3b else None
     res = reconcile(tally, gstr)
 
     print(f"\nMilan -- ITC reconciliation")
     print(f"GSTR-2A : {args.gstr2a}")
-    print(f"Tally   : {args.tally}\n")
-    print_report(tally, gstr, res, show=args.show)
+    print(f"Tally   : {args.tally}")
+    if args.gstr3b:
+        print(f"GSTR-3B : {args.gstr3b}")
+    print()
+    print_report(tally, gstr, res, show=args.show, gstr3b=gstr3b)
 
     if args.csv:
         n = write_csv(args.csv, tally, gstr, res)
         print(f"\n{n} findings written to {args.csv}")
 
     if args.xlsx:
-        write_workbook(args.xlsx, tally, gstr, res)
+        write_workbook(args.xlsx, tally, gstr, res, gstr3b=gstr3b)
         print(f"Workbook written to {args.xlsx}")
     print()
 

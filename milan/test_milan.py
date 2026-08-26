@@ -291,9 +291,88 @@ def test_plan_makes_one_action_per_non_filing_supplier():
         assert a.facts["total_tax"] == round(sum(i.tax for i in a.invoices), 2)
 
 
+def test_load_gstr3b_and_verify_totals():
+    from pathlib import Path
+    from .loaders import load_gstr3b
+    p = Path("milan/Data/Heamons/07ADQPG9909B1ZF_GSTR3B_MONTHWISE_Summary(2025-2026).xlsx")
+    if not p.exists():
+        return
+    s = load_gstr3b(str(p))
+    assert s.total_itc_non_rev == 53976364.20
+    assert s.total_itc_rev == 8081.12
+    assert s.total_tax_liability == 62581575.00
+    assert s.total_cash_offset == 10022668.00
+    assert s.opening_balance == 79522.00
+    assert s.closing_balance == 1491792.00
+    assert len(s.months) == 12
+    assert s.months["April"].itc_non_rev == 2494267.76
+
+
+def test_load_gstr2a_filing_period():
+    from pathlib import Path
+    from .loaders import load_gstr2a
+    p = Path("milan/Data/Heamons/07ADQPG9909B1ZF_GSTR2A_ANNUAL_Summary(2025-2026).xlsx")
+    if not p.exists():
+        return
+    rows = load_gstr2a(str(p))
+    assert len(rows) > 0
+    assert rows[0].filing_period == "042025"
+    assert any(r.filing_period for r in rows)
+
+
+def test_three_way_position_and_timing():
+    from pathlib import Path
+    from .loaders import load_gstr2a, load_gstr3b, load_tally
+    from .report import compute_three_way_position
+    p_2a = Path("milan/Data/Heamons/07ADQPG9909B1ZF_GSTR2A_ANNUAL_Summary(2025-2026).xlsx")
+    p_tally = Path("milan/Data/Heamons/DayBook.xlsx")
+    p_3b = Path("milan/Data/Heamons/07ADQPG9909B1ZF_GSTR3B_MONTHWISE_Summary(2025-2026).xlsx")
+    if not (p_2a.exists() and p_tally.exists() and p_3b.exists()):
+        return
+    gstr = load_gstr2a(str(p_2a))
+    tally, _ = load_tally([str(p_tally)])
+    g3b = load_gstr3b(str(p_3b))
+    res = reconcile(tally, gstr)
+    pos = compute_three_way_position(tally, gstr, res, g3b)
+
+    assert pos.available_2a == 57441592.32
+    assert pos.booked_tally == 56057647.31
+    assert pos.matched_tax == 55428415.88
+    assert pos.claimed_3b == 53976364.20
+    assert pos.matched_unclaimed == 1452051.68
+    assert pos.gap_2a_3b == 3465228.12
+    assert len(pos.monthly) == 12
+
+
+def test_workbook_six_sheets_when_3b_present():
+    import tempfile
+    from pathlib import Path
+    from .loaders import load_gstr2a, load_gstr3b, load_tally
+    from .workbook import write_workbook
+    from .xlsx_lite import Workbook
+    p_2a = Path("milan/Data/Heamons/07ADQPG9909B1ZF_GSTR2A_ANNUAL_Summary(2025-2026).xlsx")
+    p_tally = Path("milan/Data/Heamons/DayBook.xlsx")
+    p_3b = Path("milan/Data/Heamons/07ADQPG9909B1ZF_GSTR3B_MONTHWISE_Summary(2025-2026).xlsx")
+    if not (p_2a.exists() and p_tally.exists() and p_3b.exists()):
+        return
+    gstr = load_gstr2a(str(p_2a))
+    tally, _ = load_tally([str(p_tally)])
+    g3b = load_gstr3b(str(p_3b))
+    res = reconcile(tally, gstr)
+
+    tmp = Path(tempfile.gettempdir()) / "milan_test_6sheets.xlsx"
+    write_workbook(str(tmp), tally, gstr, res, gstr3b=g3b)
+    wb = Workbook(str(tmp))
+    assert len(wb.sheet_names()) == 6
+    assert "ITC Position" in wb.sheet_names()
+    assert "Summary" in wb.sheet_names()
+    tmp.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
         t()
         print(f"  ok  {t.__name__}")
     print(f"\n{len(tests)} passed")
+

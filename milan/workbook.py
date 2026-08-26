@@ -25,9 +25,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from .core import TAX_TOLERANCE, Invoice, pan, rupees
+from .core import GSTR3BSummary, TAX_TOLERANCE, ThreeWayPosition, Invoice, pan, rupees
 from .match import Result, _edit_distance
-from .report import ITC_DEADLINE, classify_ineligible, classify_unclaimed, pan_conflicts
+from .report import (
+    ITC_DEADLINE,
+    classify_ineligible,
+    classify_unclaimed,
+    compute_three_way_position,
+    pan_conflicts,
+)
 from .xlsx_write import Workbook
 
 # cellXfs indices defined in xlsx_write._styles_xml
@@ -43,6 +49,8 @@ _PAIR_COLS = ["Supplier", "What Differs",
               "Taxable Diff", "Tax Diff", "Days Apart"]
 _PAIR_WIDTHS = {0: 34, 1: 22, 2: 18, 3: 22, 4: 12, 5: 13, 6: 12,
                 7: 18, 8: 22, 9: 12, 10: 13, 11: 12, 12: 13, 13: 12, 14: 11}
+
+_ITC_POS_WIDTHS = {0: 32, 1: 18, 2: 18, 3: 18, 4: 18, 5: 30}
 
 
 def partial_mismatches(res: Result) -> list[tuple]:
@@ -133,7 +141,7 @@ def _money_styles(rows: list[list], cols: list[int], first_data_row: int = 1) ->
     return {(r, c): S_MONEY
             for r in range(first_data_row, len(rows))
             for c in cols
-            if isinstance(rows[r][c], (int, float))}
+            if c < len(rows[r]) and isinstance(rows[r][c], (int, float))}
 
 
 def _sheet_totals(res: Result, tally: list[Invoice], gstr: list[Invoice]) -> dict:
@@ -156,11 +164,11 @@ def _sheet_totals(res: Result, tally: list[Invoice], gstr: list[Invoice]) -> dic
     }
 
 
-def _build_summary(t: dict, days_left: int, matched_count: int) -> list[list]:
+def _build_summary(t: dict, days_left: int, matched_count: int, twp: ThreeWayPosition | None = None) -> list[list]:
     def total(rows):
         return sum(i.tax for i in rows)
 
-    return [
+    summary_rows = [
         ["Milan - Annual GST ITC Reconciliation", "", "", ""],
         ["", "", "", ""],
         ["Sheet", "Bills", "Value", "What to do"],
@@ -177,16 +185,71 @@ def _build_summary(t: dict, days_left: int, matched_count: int) -> list[list]:
         ["Other Ledgers (FYI)", len(t["other_ledgers"]), rupees(total(t["other_ledgers"])),
          "Confirmed nominal - reconciled through separate ledgers"],
     ]
+    if twp is not None:
+        summary_rows.append([
+            "ITC Position (3-Way)", "", rupees(twp.matched_unclaimed),
+            "Matched but never claimed in 3B - see 'ITC Position' sheet",
+        ])
+    return summary_rows
 
 
-def write_workbook(path: str, tally: list[Invoice], gstr: list[Invoice], res: Result) -> None:
+def _build_itc_position_rows(twp: ThreeWayPosition, gstr3b: GSTR3BSummary) -> list[list]:
+    rows = [
+        ["Milan - Three-Way ITC Position & Month-by-Month Schedule", "", "", "", "", ""],
+        [f"Client: {gstr3b.name or '(client)'} | GSTIN: {gstr3b.gstin or '-'} | FY: {gstr3b.fy or '-'}", "", "", "", "", ""],
+        ["", "", "", "", "", ""],
+        ["Three-Way Position (Table 8 Shape)", "Amount (Rs)", "Notes / Legal Basis", "", "", ""],
+        ["GSTR-2A Available (Table 8A)", twp.available_2a, "Total inward B2B supplies on GST portal", "", "", ""],
+        ["Tally Inward Booked", twp.booked_tally, "Total purchase & inward register in accounting software", "", "", ""],
+        ["Matched ITC Confirmed", twp.matched_tax, "Invoices matched between 2A and Tally", "", "", ""],
+        ["GSTR-3B Claimed (Table 4A)", twp.claimed_3b, "Total ITC claimed in filed GSTR-3B monthly returns", "", "", ""],
+        ["Matched but never claimed", twp.matched_unclaimed, "Matched invoices where credit was eligible but not claimed in 3B", "", "", ""],
+        ["GSTR-2A vs GSTR-3B Gap", twp.gap_2a_3b, "Difference between portal 2A and 3B claims", "", "", ""],
+        ["", "", "", "", "", ""],
+        ["Gap Attribution & Statutory Notes", "", "", "", "", ""],
+        ["Matched but never claimed", rupees(twp.matched_unclaimed), "Eligible ITC verified across both systems that client omitted from 3B.", "", "", ""],
+        ["In Tally, not in 2A", rupees(twp.only_tally_tax), "Supplier has not uploaded invoice / wrong GSTIN. Risk of reversal + interest u/s 50.", "", "", ""],
+        ["In 2A, not in Tally", rupees(twp.only_2a_tax), "Supplier uploaded invoice but client never booked in Tally. Lapses 30 Nov.", "", "", ""],
+        ["Honesty Caveat", "", "3B Table 4A includes imports, ISD, and reverse-charge credits not in 2A B2B. Part of gap is legitimately unreconcilable.", "", "", ""],
+        ["", "", "", "", "", ""],
+        ["Month", "2A (Invoice Date)", "2A (Filing Period)", "Tally Booked", "GSTR-3B Claimed", "Timing Variance (3B - 2A Filing)"],
+    ]
+    for mp in twp.monthly:
+        rows.append([
+            mp.month,
+            mp.tax_2a_by_invoice_date,
+            mp.tax_2a_by_filing_period,
+            mp.tally_tax,
+            mp.gstr3b_claimed,
+            mp.variance_3b_2a,
+        ])
+    rows.append([
+        "Total FY",
+        twp.available_2a,
+        twp.available_2a,
+        twp.booked_tally,
+        twp.claimed_3b,
+        round(twp.claimed_3b - twp.available_2a, 2),
+    ])
+    return rows
+
+
+def write_workbook(
+    path: str,
+    tally: list[Invoice],
+    gstr: list[Invoice],
+    res: Result,
+    gstr3b: GSTR3BSummary | None = None,
+) -> None:
     from datetime import date
 
     t = _sheet_totals(res, tally, gstr)
     days_left = (ITC_DEADLINE - date.today()).days
+    twp = compute_three_way_position(tally, gstr, res, gstr3b) if gstr3b is not None else None
+
     wb = Workbook()
 
-    summary = _build_summary(t, days_left, len(res.pairs))
+    summary = _build_summary(t, days_left, len(res.pairs), twp=twp)
     wb.add_sheet("Summary", summary, freeze_rows=3,
                  col_widths={0: 34, 1: 10, 2: 18, 3: 58})
 
@@ -231,4 +294,12 @@ def write_workbook(path: str, tally: list[Invoice], gstr: list[Invoice], res: Re
                  autofilter_range=f"A1:K{len(rows)}", col_widths=_LEDGER_WIDTHS,
                  cell_styles=_money_styles(rows, [4, 5, 6, 7, 8]))
 
+    # --- Sheet 6: Three-way ITC Position & Timing Schedule -----------------
+    if twp is not None and gstr3b is not None:
+        itc_rows = _build_itc_position_rows(twp, gstr3b)
+        wb.add_sheet("ITC Position", itc_rows, freeze_rows=4,
+                     col_widths=_ITC_POS_WIDTHS,
+                     cell_styles=_money_styles(itc_rows, [1, 2, 3, 4, 5], first_data_row=4))
+
     wb.write(path)
+

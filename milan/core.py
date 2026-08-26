@@ -99,6 +99,7 @@ class Invoice:
     sgst: float = 0.0
     cess: float = 0.0
     period: str = ""          # return period it landed in, e.g. "2024-05"
+    filing_period: str = ""   # e.g. "042025" from GSTR-2A
     voucher_type: str = ""    # Tally side only: Purchase / Journal / Payment
     source: str = ""          # "2A" or "TALLY"
     row_id: str = ""
@@ -125,6 +126,74 @@ class Invoice:
         return f"<{self.source} {self.gstin} {self.inv_no!r} {self.inv_date} tax={self.tax}>"
 
 
+FY_MONTHS = [
+    "April", "May", "June", "July", "August", "September",
+    "October", "November", "December", "January", "February", "March",
+]
+
+MONTH_TO_NUM = {
+    "April": 4, "May": 5, "June": 6, "July": 7, "August": 8, "September": 9,
+    "October": 10, "November": 11, "December": 12, "January": 1, "February": 2, "March": 3,
+}
+NUM_TO_MONTH = {v: k for k, v in MONTH_TO_NUM.items()}
+
+
+@dataclass
+class GSTR3BMonth:
+    month: str
+    itc_non_rev: float = 0.0
+    itc_rev: float = 0.0
+    tax_liability: float = 0.0
+    cash_offset: float = 0.0
+    opening_balance: float = 0.0
+    closing_balance: float = 0.0
+
+    @property
+    def total_itc(self) -> float:
+        return round(self.itc_non_rev + self.itc_rev, 2)
+
+
+@dataclass
+class GSTR3BSummary:
+    gstin: str = ""
+    name: str = ""
+    fy: str = ""
+    months: dict[str, GSTR3BMonth] = field(default_factory=dict)
+    total_itc_non_rev: float = 0.0
+    total_itc_rev: float = 0.0
+    total_tax_liability: float = 0.0
+    total_cash_offset: float = 0.0
+    opening_balance: float = 0.0
+    closing_balance: float = 0.0
+
+    @property
+    def total_itc(self) -> float:
+        return round(self.total_itc_non_rev + self.total_itc_rev, 2)
+
+
+@dataclass
+class MonthPosition:
+    month: str
+    tax_2a_by_invoice_date: float
+    tax_2a_by_filing_period: float
+    tally_tax: float
+    gstr3b_claimed: float
+    variance_3b_2a: float
+
+
+@dataclass
+class ThreeWayPosition:
+    available_2a: float
+    booked_tally: float
+    matched_tax: float
+    claimed_3b: float
+    matched_unclaimed: float
+    gap_2a_3b: float
+    only_tally_tax: float
+    only_2a_tax: float
+    monthly: list[MonthPosition] = field(default_factory=list)
+
+
 def tax_close(a: Invoice, b: Invoice, tol: float = TAX_TOLERANCE) -> bool:
     return abs(a.tax - b.tax) <= tol
 
@@ -144,3 +213,4 @@ def pan(gstin: str) -> str:
 
 def rupees(x: float) -> str:
     return f"Rs {x:,.0f}"
+

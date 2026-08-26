@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 
-from .core import Invoice
+from .core import FY_MONTHS, GSTR3BMonth, GSTR3BSummary, Invoice
 from .xlsx_lite import Workbook, excel_serial_to_date, header_map
 
 _GSTR2A_KEYS = {
@@ -71,7 +71,12 @@ def _tax_kind(header: str) -> str:
 
 
 def _f(v) -> float:
-    return float(v) if v not in (None, "") else 0.0
+    if v in (None, ""):
+        return 0.0
+    try:
+        return float(str(v).strip())
+    except (ValueError, TypeError):
+        return 0.0
 
 
 def _parse_ddmmyyyy(s: str):
@@ -96,6 +101,13 @@ def load_gstr2a(path: str) -> list[Invoice]:
     cols = header_map(header_rows, _GSTR2A_KEYS, merge_rows=len(header_rows))
 
     by_field = {v: k for k, v in cols.items()}
+    # Filing period column if present (e.g. Col O "Filing Period")
+    fp_col = next((col for r in header_rows for col, val in r.items()
+                   if val and "filing period" in str(val).lower() and "gstr" not in str(val).lower()), None)
+    if not fp_col:
+        fp_col = next((col for r in header_rows for col, val in r.items()
+                       if val and "filing period" in str(val).lower()), None)
+
     out = []
     for i, r in enumerate(rows):
         gstin = r.get(by_field["gstin"])
@@ -105,6 +117,7 @@ def load_gstr2a(path: str) -> list[Invoice]:
         # a data row -- every real data row also has a date; no title row does.
         if not gstin or not date_raw or gstin == "GSTIN of supplier":
             continue
+        fp = (r.get(fp_col) or "").strip() if fp_col else ""
         out.append(
             Invoice(
                 gstin=gstin.strip().upper(),
@@ -116,6 +129,7 @@ def load_gstr2a(path: str) -> list[Invoice]:
                 cgst=_f(r.get(by_field["cgst"])),
                 sgst=_f(r.get(by_field["sgst"])),
                 cess=_f(r.get(by_field["cess"])),
+                filing_period=fp,
                 source="2A",
                 row_id=f"2A{i:06d}",
             )
@@ -123,6 +137,145 @@ def load_gstr2a(path: str) -> list[Invoice]:
     if not out:
         raise ValueError(f"parsed 0 invoices from {path} -- header matched but no data rows found")
     return out
+
+
+def load_gstr3b(path: str) -> GSTR3BSummary:
+    """Load annual GSTR-3B monthly summary report.
+
+    Extracts monthly and FY totals:
+      - ITC non-reverse-charge (Table 4A(5))
+      - ITC reverse-charge (Table 4A(3) / 3.1(d))
+      - Tax liability (Table 3.1)
+      - Cash offset (Table 6.1)
+      - Opening & closing ITC balances
+    """
+    wb = Workbook(path)
+    sheet = next(
+        (n for n in wb.sheet_names() if "summary" in n.lower() or "gstr-3b" in n.lower() or "3b" in n.lower()),
+        wb.sheet_names()[0],
+    )
+    rows = list(wb.rows(sheet))
+
+    # Metadata extraction (client name, GSTIN, FY)
+    gstin, name, fy = "", "", ""
+    for r in rows[:10]:
+        for val in r.values():
+            if not val:
+                continue
+            text = str(val)
+            m_gstin = re.search(r"GSTIN:\s*([0-9A-Z]{15})", text, re.I)
+            if m_gstin:
+                gstin = m_gstin.group(1).upper()
+            m_name = re.search(r"Name:\s*([^\n\r]+)", text, re.I)
+            if m_name:
+                name = m_name.group(1).strip()
+            m_fy = re.search(r"\((\d{4}-\d{4})\)", text)
+            if m_fy:
+                fy = m_fy.group(1)
+
+    # Locate month header row
+    header_row_idx = None
+    month_col_map = {}
+    total_col = None
+
+    for idx, r in enumerate(rows[:15]):
+        col_to_month = {}
+        for col, val in r.items():
+            if not val:
+                continue
+            val_clean = str(val).strip().lower()
+            for m in FY_MONTHS:
+                if m.lower() in val_clean or (len(val_clean) >= 3 and val_clean.startswith(m.lower()[:3])):
+                    col_to_month[m] = col
+            if "total" in val_clean:
+                total_col = col
+        if len(col_to_month) >= 6:
+            header_row_idx = idx
+            month_col_map = col_to_month
+            break
+
+    if header_row_idx is None:
+        raise ValueError(f"could not find month header row in GSTR-3B sheet {sheet!r}")
+
+    monthly_data = {m: GSTR3BMonth(month=m) for m in FY_MONTHS}
+    totals = {
+        "itc_non_rev": 0.0,
+        "itc_rev": 0.0,
+        "tax_liability": 0.0,
+        "cash_offset": 0.0,
+    }
+
+    curr_sec = ""
+    for r in rows[header_row_idx + 1:]:
+        if not any(r.values()):
+            continue
+        sec_val = r.get("A")
+        if sec_val:
+            curr_sec = str(sec_val).strip()
+        part_val = str(r.get("B") or "").strip()
+        sec_low = curr_sec.lower()
+        part_low = part_val.lower()
+
+        def get_row_vals():
+            m_vals = {m: _f(r.get(col)) for m, col in month_col_map.items()}
+            tot_val = _f(r.get(total_col)) if total_col else sum(m_vals.values())
+            return m_vals, tot_val
+
+        if "input tax credit" in sec_low and ("non reverse" in sec_low or "non-reverse" in sec_low):
+            if "total" in part_low:
+                m_vals, tot = get_row_vals()
+                for m, val in m_vals.items():
+                    monthly_data[m].itc_non_rev = val
+                totals["itc_non_rev"] = tot
+        elif "input tax credit" in sec_low and "reverse charge" in sec_low and "non reverse" not in sec_low:
+            if "total" in part_low:
+                m_vals, tot = get_row_vals()
+                for m, val in m_vals.items():
+                    monthly_data[m].itc_rev = val
+                totals["itc_rev"] = tot
+        elif "tax liability" in sec_low:
+            if "total (including reverse charge)" in part_low or ("total" in part_low and "including" in part_low):
+                m_vals, tot = get_row_vals()
+                for m, val in m_vals.items():
+                    monthly_data[m].tax_liability = val
+                totals["tax_liability"] = tot
+            elif "total" in part_low and totals["tax_liability"] == 0.0:
+                m_vals, tot = get_row_vals()
+                for m, val in m_vals.items():
+                    monthly_data[m].tax_liability = val
+                totals["tax_liability"] = tot
+        elif "cash offset" in sec_low:
+            if "total" in part_low:
+                m_vals, tot = get_row_vals()
+                for m, val in m_vals.items():
+                    monthly_data[m].cash_offset = val
+                totals["cash_offset"] = tot
+        elif "opening itc balance" in sec_low:
+            if "total" in part_low:
+                m_vals, _ = get_row_vals()
+                for m, val in m_vals.items():
+                    monthly_data[m].opening_balance = val
+        elif "closing itc balance" in sec_low:
+            if "total" in part_low:
+                m_vals, _ = get_row_vals()
+                for m, val in m_vals.items():
+                    monthly_data[m].closing_balance = val
+
+    opening_fy = monthly_data["April"].opening_balance if "April" in monthly_data else 0.0
+    closing_fy = monthly_data["March"].closing_balance if "March" in monthly_data else 0.0
+
+    return GSTR3BSummary(
+        gstin=gstin,
+        name=name,
+        fy=fy,
+        months=monthly_data,
+        total_itc_non_rev=round(totals["itc_non_rev"], 2),
+        total_itc_rev=round(totals["itc_rev"], 2),
+        total_tax_liability=round(totals["tax_liability"], 2),
+        total_cash_offset=round(totals["cash_offset"], 2),
+        opening_balance=round(opening_fy, 2),
+        closing_balance=round(closing_fy, 2),
+    )
 
 
 # Voucher types that represent an INWARD supply (something bought). Sales,
