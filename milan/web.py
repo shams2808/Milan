@@ -77,29 +77,30 @@ MAX_UPLOAD = 4 * 1024 * 1024
 # 127.0.0.1 and wrong the moment it has a public URL. This handles a real
 # client's GSTINs, supplier list and complete tax position.
 _PASSWORD = os.environ.get("MILAN_PASSWORD", "").strip()
-_RESULTS: dict[str, dict] = {}
-_SWAP_SESSIONS: dict[str, dict] = {}
+# Nothing is retained between requests. Every response is self-contained --
+# workbook, CSV and Co-Pilot answers are embedded in the page it returns -- so
+# the client's books are parsed, reported on, and erased inside one request.
+# There is deliberately no session table: a serverless instance is shared with
+# whoever it serves next.
 _TMP = Path(tempfile.gettempdir()) / "milan_sessions"
 _TMP.mkdir(parents=True, exist_ok=True)
 
 
-def _cleanup_old_sessions(max_age_seconds: int = 7200, max_sessions: int = 50) -> None:
-    """Evict expired sessions and delete temporary files to keep production disk clean."""
+def _sweep_stale_uploads(max_age_seconds: int = 900) -> None:
+    """Delete anything an earlier request left behind.
+
+    A successful reconciliation already removes its own folder, and so does
+    every error path. This is the backstop for the case none of them cover: a
+    process killed mid-request. Age-based rather than session-based, because
+    there are no sessions to consult.
+    """
     now = time.time()
-    expired = [
-        t for t, d in _RESULTS.items()
-        if now - d.get("created_at", now) > max_age_seconds
-    ]
-    for t in expired:
-        d = _RESULTS.pop(t, None)
-        if d and "folder" in d:
-            shutil.rmtree(d["folder"], ignore_errors=True)
-    if len(_RESULTS) > max_sessions:
-        sorted_tokens = sorted(_RESULTS.keys(), key=lambda t: _RESULTS[t].get("created_at", 0))
-        for t in sorted_tokens[:len(_RESULTS) - max_sessions]:
-            d = _RESULTS.pop(t, None)
-            if d and "folder" in d:
-                shutil.rmtree(d["folder"], ignore_errors=True)
+    for folder in _TMP.glob("*"):
+        try:
+            if folder.is_dir() and now - folder.stat().st_mtime > max_age_seconds:
+                shutil.rmtree(folder, ignore_errors=True)
+        except OSError:
+            pass
 
 
 _CSS = """
@@ -3340,104 +3341,6 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        if path == "/swap-reconcile":
-            params = urllib.parse.parse_qs(parsed.query)
-            token = params.get("token", [""])[0]
-            session = _SWAP_SESSIONS.get(token)
-            if not session:
-                return self._send(_render_error_page(
-                    title="Please Check Your Uploaded Files Again",
-                    message="The upload session has expired or is invalid. Please return to the workspace and re-attach your files.",
-                    show_checklist=True,
-                ), 400)
-            try:
-                gstr_path = session["gstr_path"]
-                tally_paths = session["tally_paths"]
-                gstr3b_path = session.get("gstr3b_path")
-                folder = session["folder"]
-
-                gstr = load_gstr2a(str(gstr_path))
-                tally, _vtypes = load_tally([str(p) for p in tally_paths])
-                gstr3b = load_gstr3b(str(gstr3b_path)) if gstr3b_path else None
-                res = reconcile(tally, gstr)
-                twp = compute_three_way_position(tally, gstr, res, gstr3b) if gstr3b else None
-                forecast = compute_finops_forecast(tally, gstr, res, twp, gstr3b)
-                vendors, ims_summary = evaluate_vendor_risk(tally, gstr, res)
-                actions = plan(res, tally, gstr)
-
-                write_workbook(str(folder / "reconciliation.xlsx"), tally, gstr, res, gstr3b=gstr3b)
-                write_csv(str(folder / "findings.csv"), tally, gstr, res)
-
-                _RESULTS[token] = {
-                    "folder": folder,
-                    "tally": tally,
-                    "gstr": gstr,
-                    "res": res,
-                    "gstr3b": gstr3b,
-                    "twp": twp,
-                    "forecast": forecast,
-                    "vendors": vendors,
-                    "ims_summary": ims_summary,
-                    "actions": actions,
-                    "created_at": time.time(),
-                }
-                del _SWAP_SESSIONS[token]
-                return self._send(_render_finops_dashboard(token, tally, gstr, res, twp, gstr3b, forecast, vendors, ims_summary, actions,
-                                            embed=_build_embed(folder, tally, gstr, res, twp, gstr3b, forecast, vendors, ims_summary)))
-            except Exception as exc:
-                return self._send(_render_error_page(
-                    title="Please Check Your Uploaded Files Again",
-                    message="Could not auto-reconcile the swapped files. Please check your files again and re-attach them in the workspace.",
-                    details=str(exc),
-                    show_checklist=True,
-                ), 400)
-
-        if path == "/api/copilot":
-            params = urllib.parse.parse_qs(parsed.query)
-            token = params.get("token", [""])[0]
-            query = params.get("q", [""])[0]
-            state = _RESULTS.get(token)
-            if not state:
-                return self._send(json.dumps({"error": "Session expired"}), 404, "application/json")
-
-            res = ask_copilot(
-                query,
-                state["tally"],
-                state["gstr"],
-                state["res"],
-                state.get("twp"),
-                state.get("gstr3b"),
-                state["forecast"],
-                state["vendors"],
-                state["ims_summary"],
-            )
-            return self._send(json.dumps({
-                "query": res.query,
-                "headline": res.headline,
-                "answer_html": res.answer_html,
-                "action_items": res.action_items,
-            }), 200, "application/json")
-
-        if path.startswith("/download/"):
-            try:
-                _, _, token, kind = path.split("/", 3)
-            except ValueError:
-                return self._send("Bad download link", 400)
-            state = _RESULTS.get(token)
-            if state is None:
-                return self._send("Session expired", 404)
-            fpath = state["folder"] / ("reconciliation.xlsx" if kind == "xlsx" else "findings.csv")
-            if not fpath.exists():
-                return self._send("File not found", 404)
-            data = fpath.read_bytes()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Disposition", f'attachment; filename="{fpath.name}"')
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-            return
-
         self._send("Page not found", 404)
 
     def do_POST(self) -> None:
@@ -3456,7 +3359,7 @@ class Handler(BaseHTTPRequestHandler):
         boundary = ctype.split("boundary=", 1)[1].strip('"').encode()
         parts = _parse_multipart(self.rfile.read(length), boundary)
 
-        _cleanup_old_sessions()
+        _sweep_stale_uploads()
         token = uuid.uuid4().hex
         folder = _TMP / token
         folder.mkdir(parents=True, exist_ok=True)
@@ -3512,20 +3415,36 @@ class Handler(BaseHTTPRequestHandler):
             looks_like_pr_in_2a = any(k in exc_str for k in pr_markers)
 
             if is_swapped:
-                _SWAP_SESSIONS[token] = {
-                    "gstr_path": tally_paths[0],
-                    "tally_paths": [gstr_path],
-                    "gstr3b_path": gstr3b_path,
-                    "folder": folder,
-                }
-                return self._send(_render_error_page(
-                    title="Please Check Your Uploaded Files Again",
-                    message="The uploaded files could not be reconciled. Your Purchase Register was attached in the GSTR-2A field, and GSTR-2A was attached in the Purchase Register field.",
-                    details=str(exc),
-                    is_swapped=True,
-                    token=token,
-                    show_checklist=True,
-                ), 400)
+                # The two files are simply in each other's slots. Reconcile with
+                # them the right way round in THIS request rather than parking
+                # them in a session for a follow-up one: a second request may
+                # reach a different serverless instance that has never seen
+                # them, and it saves the practitioner a click either way.
+                try:
+                    gstr = load_gstr2a(str(tally_paths[0]))
+                    tally, _vtypes = load_tally([str(gstr_path)])
+                    gstr3b = load_gstr3b(str(gstr3b_path)) if gstr3b_path else None
+                    res = reconcile(tally, gstr)
+                    twp = compute_three_way_position(tally, gstr, res, gstr3b) if gstr3b else None
+                    forecast = compute_finops_forecast(tally, gstr, res, twp, gstr3b)
+                    vendors, ims_summary = evaluate_vendor_risk(tally, gstr, res)
+                    actions = plan(res, tally, gstr)
+                    write_workbook(str(folder / "reconciliation.xlsx"), tally, gstr, res, gstr3b=gstr3b)
+                    write_csv(str(folder / "findings.csv"), tally, gstr, res)
+                    page = _render_finops_dashboard(
+                        token, tally, gstr, res, twp, gstr3b, forecast, vendors, ims_summary, actions,
+                        embed=_build_embed(folder, tally, gstr, res, twp, gstr3b,
+                                           forecast, vendors, ims_summary))
+                    shutil.rmtree(folder, ignore_errors=True)
+                    return self._send(page)
+                except Exception:
+                    shutil.rmtree(folder, ignore_errors=True)
+                    return self._send(_render_error_page(
+                        title="Please Check Your Uploaded Files Again",
+                        message="The uploaded files could not be reconciled. Your Purchase Register appears to be attached in the GSTR-2A field, and GSTR-2A in the Purchase Register field. Please swap them and try again.",
+                        details=str(exc),
+                        show_checklist=True,
+                    ), 400)
             elif looks_like_pr_in_2a:
                 shutil.rmtree(folder, ignore_errors=True)
                 return self._send(_render_error_page(
@@ -3545,22 +3464,16 @@ class Handler(BaseHTTPRequestHandler):
                     show_checklist=True,
                 ), 400)
 
-        _RESULTS[token] = {
-            "folder": folder,
-            "tally": tally,
-            "gstr": gstr,
-            "res": res,
-            "gstr3b": gstr3b,
-            "twp": twp,
-            "forecast": forecast,
-            "vendors": vendors,
-            "ims_summary": ims_summary,
-            "actions": actions,
-            "created_at": time.time(),
-        }
-
-        self._send(_render_finops_dashboard(token, tally, gstr, res, twp, gstr3b, forecast, vendors, ims_summary, actions,
-                                            embed=_build_embed(folder, tally, gstr, res, twp, gstr3b, forecast, vendors, ims_summary)))
+        # Build the page, then destroy every trace of this client's books.
+        # The response is self-contained -- workbook, CSV and Co-Pilot answers
+        # all travel inside it -- so there is nothing left worth keeping, and
+        # anything kept would sit in a warm instance's memory and /tmp waiting
+        # for the next, unrelated user.
+        page = _render_finops_dashboard(
+            token, tally, gstr, res, twp, gstr3b, forecast, vendors, ims_summary, actions,
+            embed=_build_embed(folder, tally, gstr, res, twp, gstr3b, forecast, vendors, ims_summary))
+        shutil.rmtree(folder, ignore_errors=True)
+        return self._send(page)
 
 
 def _render_error_page(

@@ -5,23 +5,32 @@ dependencies — `requirements.txt` is empty on purpose.
 
 ---
 
-## 1. Set the password FIRST
+## 1. Password — optional, and here is what it does and does not buy
 
-Milan handles a real client's GSTINs, supplier list and complete tax position.
-A Vercel URL is public: without a password, anyone who has the link can upload,
-reconcile and download.
+Milan keeps **nothing** between requests. One upload is parsed, reported on,
+and erased inside a single request: the response carries the workbook, the CSV
+and every Co-Pilot answer inside itself, and the uploaded files and everything
+derived from them are deleted before the reply is sent. There is no session
+table and no `/download/{token}` route to leak one.
 
-In **Vercel → Project → Settings → Environment Variables**, add:
+So a password is **not** protecting stored client data — there is none.
+
+What it still buys:
+
+- **Compute control.** A public URL means anyone can spend your Vercel
+  invocations. On the Hobby tier that is a quota, not a bill, but it is yours.
+- **Not being an open GST tool on the internet** under your parents' practice.
+
+Leave it off and the honest risk is a stranger reconciling their own files at
+your expense. Turn it on by adding, in **Vercel → Settings → Environment
+Variables**:
 
 | Name | Value |
 |---|---|
 | `MILAN_PASSWORD` | a password you choose |
 
-Apply it to **Production, Preview and Development**.
-
-The browser then asks for it once per session (username is ignored, any value
-works). Leaving the variable unset disables the gate entirely — correct for
-running locally on `127.0.0.1`, wrong for anything with a public URL.
+The browser then asks once per session (any username; only the password is
+checked). Unset means no gate, which is also correct for local use.
 
 ## 2. Deploy
 
@@ -43,11 +52,14 @@ returns carries everything it will still need:
 - every Co-Pilot answer, precomputed by the same `ask_copilot()` the CLI uses,
   answered instantly with no round trip
 
-The practical consequence: a download still works after the instance that
-produced it is gone. An earlier build kept results in a module-level dict and
-`/tmp`, which works on a laptop and fails intermittently on Vercel — the
-reconciliation would display and then "Session expired" on download, depending
-on which instance answered.
+The practical consequence is two-fold: a download still works after the
+instance that produced it is gone, and **no client's books are left sitting in
+a warm instance** waiting for whoever it serves next.
+
+An earlier build kept results in a module-level dict and `/tmp`. That fails
+intermittently on Vercel — the reconciliation displays, then "Session expired"
+on download, depending on which instance answers — and it retained one
+client's data for up to two hours where the next visitor's request would land.
 
 ## Limits worth knowing
 
