@@ -8,8 +8,9 @@ Zero external dependencies, 100% Python standard library.
 
 from __future__ import annotations
 
-import html
 import base64
+import html
+import io
 import json
 import os
 import shutil
@@ -17,6 +18,7 @@ import tempfile
 import time
 import urllib.parse
 import uuid
+import zipfile
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -2088,6 +2090,138 @@ button.btn-primary:hover {
   gap: 6px;
 }
 
+/* Demo Data Download Bar */
+.demo-data-bar {
+  background: #FFFFFF;
+  border: 1px solid var(--border-strong);
+  border-left: 4px solid var(--brand-emerald);
+  border-radius: var(--radius-xs);
+  padding: 14px 18px;
+  margin-bottom: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  box-shadow: var(--shadow-sm);
+}
+.demo-data-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 560px;
+}
+.demo-icon-box {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  background: var(--brand-emerald-soft);
+  border: 1px solid var(--brand-emerald-border);
+  color: var(--brand-emerald);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.demo-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 3px;
+  flex-wrap: wrap;
+}
+.badge-demo-tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background: var(--brand-emerald-soft);
+  color: var(--brand-emerald);
+  border: 1px solid var(--brand-emerald-border);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.demo-title-text {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--navy);
+}
+.demo-desc-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+.demo-data-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.btn-demo-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  background: #F8FAFC;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--slate-dark);
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+.btn-demo-file:hover {
+  background: #EEF2F6;
+  border-color: var(--navy);
+  color: var(--navy);
+}
+.btn-demo-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  background: var(--navy);
+  border: 1px solid var(--navy);
+  border-radius: 4px;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #FFFFFF;
+  text-decoration: none;
+  transition: all 0.15s ease;
+}
+.btn-demo-all:hover {
+  background: #1E293B;
+  color: #FFFFFF;
+}
+.btn-demo-autofill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 13px;
+  background: var(--brand-emerald);
+  border: 1px solid var(--brand-emerald);
+  border-radius: 4px;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #FFFFFF;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.btn-demo-autofill:hover {
+  background: var(--brand-emerald-vibrant);
+}
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  100% { transform: rotate(360deg); }
+}
+
 @media (max-width: 960px) {
   .bento-col-4, .bento-col-6, .bento-col-8 { grid-column: span 12; }
   .metric-grid-4, .metric-grid-3, .about-grid, .guide-grid, .story-grid-2, .metrics-summary-bar, .how-grid { grid-template-columns: 1fr; }
@@ -2124,7 +2258,7 @@ _LANDING_HTML = """<!doctype html>
     <!-- Story Hero Section -->
     <section class="story-hero">
       <div class="story-pill">
-        <span>⚡</span> Long Hours of Manual Matching &rarr; One Reconciled Workbook
+        Long Hours of Manual Matching &rarr; One Reconciled Workbook
       </div>
       <h1 class="story-headline">
         Your Long Hours of GST Reconciliation.<br>
@@ -2239,7 +2373,7 @@ _LANDING_HTML = """<!doctype html>
             Export your purchase register from Tally (<kbd class="kbd">F5</kbd> / <kbd class="kbd">Alt+E</kbd>) or BUSY using the built-in Columnar format, along with your GSTR-2A/2B Excel from the GST portal.
           </p>
           <div class="how-foot">
-            <span style="font-weight:700;">✓</span> Standard Columnar Format
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="vertical-align:text-bottom;margin-right:4px;"><polyline points="20 6 9 17 4 12"></polyline></svg> Standard Columnar Format
           </div>
         </div>
 
@@ -2255,7 +2389,7 @@ _LANDING_HTML = """<!doctype html>
             Drag and drop your files into the मिलान workspace. The multi-permutation engine parses, matches, and classifies discrepancies entirely in local RAM.
           </p>
           <div class="how-foot">
-            <span style="font-weight:700;">✓</span> 100% Local Machine Execution
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="vertical-align:text-bottom;margin-right:4px;"><polyline points="20 6 9 17 4 12"></polyline></svg> 100% Local Machine Execution
           </div>
         </div>
 
@@ -2271,7 +2405,7 @@ _LANDING_HTML = """<!doctype html>
             Review the interactive discrepancy dashboard, examine vendor risk profiles, copy pre-drafted dispute notices, and download the 6-sheet audit Excel.
           </p>
           <div class="how-foot">
-            <span style="font-weight:700;">✓</span> Audit-Proof Working Papers
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="vertical-align:text-bottom;margin-right:4px;"><polyline points="20 6 9 17 4 12"></polyline></svg> Audit-Proof Working Papers
           </div>
         </div>
       </div>
@@ -2316,9 +2450,9 @@ _APP_HTML = """<!doctype html>
       <h3 style="font-family:var(--font-serif);font-size:20px;font-weight:600;color:var(--navy);margin-bottom:6px;">Reconciling Client Books...</h3>
       <p style="font-size:13px;color:var(--text-secondary);margin-bottom:14px;">Deterministic 3-way verification across books, portal, and statutory returns.</p>
       <div class="loader-steps">
-        <div class="loader-step-item done"><span style="color:var(--trust-emerald);">✓</span> Inward Supply Schema Validation &amp; Parsing</div>
-        <div class="loader-step-item done"><span style="color:var(--trust-emerald);">✓</span> 9-Stage Multi-Permutation Matching Engine</div>
-        <div class="loader-step-item done"><span style="color:var(--trust-emerald);">✓</span> Compiling Table 8 Working Papers &amp; Scrutiny Shield</div>
+        <div class="loader-step-item done"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--trust-emerald)" stroke-width="3" style="vertical-align:-1px;margin-right:4px;"><polyline points="20 6 9 17 4 12"></polyline></svg> Inward Supply Schema Validation &amp; Parsing</div>
+        <div class="loader-step-item done"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--trust-emerald)" stroke-width="3" style="vertical-align:-1px;margin-right:4px;"><polyline points="20 6 9 17 4 12"></polyline></svg> 9-Stage Multi-Permutation Matching Engine</div>
+        <div class="loader-step-item done"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--trust-emerald)" stroke-width="3" style="vertical-align:-1px;margin-right:4px;"><polyline points="20 6 9 17 4 12"></polyline></svg> Compiling Table 8 Working Papers &amp; Scrutiny Shield</div>
       </div>
     </div>
   </div>
@@ -2339,9 +2473,47 @@ _APP_HTML = """<!doctype html>
     </header>
 
     <!-- Workspace Header -->
-    <div style="margin-bottom:24px;">
+    <div style="margin-bottom:20px;">
       <h1 class="hero-title" style="font-size:26px;">Attach Client Working Papers</h1>
       <p class="hero-sub" style="font-size:14px;">Upload your GSTR-2A/2B portal report and Tally / BUSY purchase register below to run the multi-permutation matching engine. Parsed deterministically in local memory with zero cloud telemetry.</p>
+    </div>
+
+    <!-- Demo Working Papers Bar -->
+    <div class="demo-data-bar">
+      <div class="demo-data-left">
+        <div class="demo-icon-box">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+        </div>
+        <div>
+          <div class="demo-title-row">
+            <span class="badge-demo-tag">Demo Dataset</span>
+            <span class="demo-title-text">Want to test reconciliation with sample books?</span>
+          </div>
+          <div class="demo-desc-text">Download authentic client test files to run the reconciliation yourself, or auto-fill them directly:</div>
+        </div>
+      </div>
+      <div class="demo-data-actions">
+        <a href="/demo-data/download?file=gstr2a" class="btn-demo-file" download="GSTR2A.xlsx" title="Download Sample GSTR-2A Portal Export (288 KB)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          GSTR-2A.xlsx
+        </a>
+        <a href="/demo-data/download?file=purchase" class="btn-demo-file" download="Purchase register.xlsx" title="Download Sample Purchase Register (39 KB)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          Purchase Register.xlsx
+        </a>
+        <a href="/demo-data/download?file=gstr3b" class="btn-demo-file" download="GSTR3B.xlsx" title="Download Sample GSTR-3B Summary (37 KB)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          GSTR-3B.xlsx
+        </a>
+        <a href="/demo-data/download?file=all" class="btn-demo-all" download="Milan_Demo_Working_Papers.zip" title="Download All 3 Files in a ZIP Archive">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          Download All (ZIP)
+        </a>
+        <button type="button" class="btn-demo-autofill" onclick="autoFillDemoData(this)" title="Auto-fill these demo files directly into the containers below">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+          Auto-Fill Into Containers
+        </button>
+      </div>
     </div>
 
     <!-- Hero / Upload Zone -->
@@ -2392,12 +2564,12 @@ _APP_HTML = """<!doctype html>
               <div class="dz-attached-check">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2.8"><polyline points="20 6 9 17 4 12"></polyline></svg>
               </div>
-              <span class="dz-pill-attached">✓ Working Paper Attached</span>
+              <span class="dz-pill-attached"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="vertical-align:-1px;margin-right:3px;"><polyline points="20 6 9 17 4 12"></polyline></svg>Working Paper Attached</span>
               <div class="dz-attached-doc-type">GSTR-2A / 2B Portal Export</div>
               <div class="dz-file-card" id="name-dz-2a"></div>
               <div class="dz-attached-footer">
                 <span class="dz-replace-text">Click card to replace file</span>
-                <button type="button" class="dz-btn-remove" onclick="removeFile(event, 'file-2a', 'dz-2a')">✕ Remove</button>
+                <button type="button" class="dz-btn-remove" onclick="removeFile(event, 'file-2a', 'dz-2a')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align:-1px;margin-right:2px;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>Remove</button>
               </div>
             </div>
           </label>
@@ -2421,12 +2593,12 @@ _APP_HTML = """<!doctype html>
               <div class="dz-attached-check">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2.8"><polyline points="20 6 9 17 4 12"></polyline></svg>
               </div>
-              <span class="dz-pill-attached">✓ Working Paper Attached</span>
+              <span class="dz-pill-attached"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="vertical-align:-1px;margin-right:3px;"><polyline points="20 6 9 17 4 12"></polyline></svg>Working Paper Attached</span>
               <div class="dz-attached-doc-type">Tally / BUSY Purchase Register</div>
               <div class="dz-file-card" id="name-dz-tally"></div>
               <div class="dz-attached-footer">
                 <span class="dz-replace-text">Click card to replace files</span>
-                <button type="button" class="dz-btn-remove" onclick="removeFile(event, 'file-tally', 'dz-tally')">✕ Remove</button>
+                <button type="button" class="dz-btn-remove" onclick="removeFile(event, 'file-tally', 'dz-tally')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align:-1px;margin-right:2px;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>Remove</button>
               </div>
             </div>
           </label>
@@ -2450,12 +2622,12 @@ _APP_HTML = """<!doctype html>
               <div class="dz-attached-check">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#7C3AED" stroke-width="2.8"><polyline points="20 6 9 17 4 12"></polyline></svg>
               </div>
-              <span class="dz-pill-attached">✓ Table 8 Return Attached</span>
+              <span class="dz-pill-attached"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="vertical-align:-1px;margin-right:3px;"><polyline points="20 6 9 17 4 12"></polyline></svg>Table 8 Return Attached</span>
               <div class="dz-attached-doc-type">GSTR-3B Monthly Return</div>
               <div class="dz-file-card" id="name-dz-3b"></div>
               <div class="dz-attached-footer">
                 <span class="dz-replace-text">Click card to replace file</span>
-                <button type="button" class="dz-btn-remove" onclick="removeFile(event, 'file-3b', 'dz-3b')">✕ Remove</button>
+                <button type="button" class="dz-btn-remove" onclick="removeFile(event, 'file-3b', 'dz-3b')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align:-1px;margin-right:2px;"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>Remove</button>
               </div>
             </div>
           </label>
@@ -2684,11 +2856,48 @@ _APP_HTML = """<!doctype html>
         var extra3b = has3b ? ' + GSTR-3B Table 8' : '';
         summaryBox.innerHTML = '<span style="color:#047857;font-weight:700;display:inline-flex;align-items:center;gap:6px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg> Both Required Files Attached' + extra3b + ' &middot; Click below to Reconcile</span>';
       } else if (has2a) {
-        summaryBox.innerHTML = '<span style="color:#2563EB;font-weight:600;">✓ GSTR-2A attached &middot; Next: Attach Tally or BUSY Purchase Register</span>';
+        summaryBox.innerHTML = '<span style="color:#2563EB;font-weight:600;display:inline-flex;align-items:center;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> GSTR-2A attached &middot; Next: Attach Tally or BUSY Purchase Register</span>';
       } else if (hasTally) {
-        summaryBox.innerHTML = '<span style="color:#059669;font-weight:600;">✓ Purchase Register attached &middot; Next: Attach GSTR-2A Portal Export</span>';
+        summaryBox.innerHTML = '<span style="color:#059669;font-weight:600;display:inline-flex;align-items:center;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Purchase Register attached &middot; Next: Attach GSTR-2A Portal Export</span>';
       } else {
         summaryBox.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg> Zero cloud telemetry &middot; 100% deterministic Python standard library &middot; Strict client confidentiality';
+      }
+    }
+
+    async function autoFillDemoData(btn) {
+      var origText = btn.innerHTML;
+      btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg> Loading demo files...';
+      btn.disabled = true;
+      dismissErrorBanner();
+      try {
+        var items = [
+          { id: 'file-2a', dz: 'dz-2a', file: 'gstr2a', name: 'GSTR2A.xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+          { id: 'file-tally', dz: 'dz-tally', file: 'purchase', name: 'Purchase register.xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+          { id: 'file-3b', dz: 'dz-3b', file: 'gstr3b', name: 'GSTR3B.xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+        ];
+        for (var i = 0; i < items.length; i++) {
+          var item = items[i];
+          var res = await fetch('/demo-data/download?file=' + item.file);
+          if (!res.ok) throw new Error('Failed to fetch ' + item.name);
+          var blob = await res.blob();
+          var file = new File([blob], item.name, { type: item.mime });
+          var dt = new DataTransfer();
+          dt.items.add(file);
+          var input = document.getElementById(item.id);
+          if (input) {
+            input.files = dt.files;
+            handleFileSelected(input, item.dz);
+          }
+        }
+        btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg> Demo Files Attached!';
+        setTimeout(function() {
+          btn.innerHTML = origText;
+          btn.disabled = false;
+        }, 3000);
+      } catch (err) {
+        showErrorBanner('Could not load demo files: ' + err.message, 'Demo Data Error');
+        btn.innerHTML = origText;
+        btn.disabled = false;
       }
     }
 
@@ -2801,10 +3010,10 @@ _DASHBOARD_HTML = """<!doctype html>
 
     <!-- Navigation Tabs (4 Core Pillars) -->
     <div class="tabs-nav">
-      <button class="tab-btn active" onclick="switchTab('tab-recon', this)">📊 Reconciliation Summary &amp; Table 8</button>
-      <button class="tab-btn" onclick="switchTab('tab-forecaster', this)">🛡️ Rule 88D &amp; Cash Forecaster</button>
-      <button class="tab-btn" onclick="switchTab('tab-vendors', this)">🏢 Vendor IMS Matrix</button>
-      <button class="tab-btn" onclick="switchTab('tab-drafter', this)">⚖️ Dispute Notice Drafter</button>
+      <button class="tab-btn active" onclick="switchTab('tab-recon', this)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:text-bottom;margin-right:6px;"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>Reconciliation Summary &amp; Table 8</button>
+      <button class="tab-btn" onclick="switchTab('tab-forecaster', this)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:text-bottom;margin-right:6px;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Rule 88D &amp; Cash Forecaster</button>
+      <button class="tab-btn" onclick="switchTab('tab-vendors', this)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:text-bottom;margin-right:6px;"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Vendor IMS Matrix</button>
+      <button class="tab-btn" onclick="switchTab('tab-drafter', this)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:text-bottom;margin-right:6px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Dispute Notice Drafter</button>
     </div>
 
     <!-- TAB 1: Recon & Table 8 (Bento Grid) -->
@@ -2854,7 +3063,7 @@ _DASHBOARD_HTML = """<!doctype html>
                 <div style="font-family:var(--font-mono);font-size:18px;font-weight:700;color:var(--trust-emerald);">__MATCHED_TAX__</div>
                 <div style="font-size:12px;color:var(--text-secondary);">Verified Eligible ITC</div>
                 <div style="margin-top:4px;">
-                  <span class="status-pill claim">✓ __MATCH_COUNT__ Confirmed Pairs</span>
+                  <span class="status-pill claim"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="vertical-align:baseline;margin-right:3px;"><polyline points="20 6 9 17 4 12"></polyline></svg>__MATCH_COUNT__ Confirmed Pairs</span>
                 </div>
               </div>
             </div>
@@ -3057,7 +3266,7 @@ _DASHBOARD_HTML = """<!doctype html>
   <!-- FLOATING COPILOT CHATBOT (BOTTOM RIGHT) -->
   <button class="copilot-trigger" onclick="toggleCopilotChat()">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-    <span>✨ Ask FinOps Co-Pilot</span>
+    <span>Ask FinOps Co-Pilot</span>
   </button>
 
   <div id="copilot-chat" class="copilot-chat-panel">
@@ -3069,12 +3278,12 @@ _DASHBOARD_HTML = """<!doctype html>
         </div>
         <div class="copilot-header-sub">100% Fact-Grounded &middot; Zero Hallucination</div>
       </div>
-      <button class="copilot-close" onclick="toggleCopilotChat()">✕</button>
+      <button class="copilot-close" onclick="toggleCopilotChat()">&times;</button>
     </div>
 
     <div id="copilot-chat-body" class="copilot-body">
       <div class="chat-msg copilot">
-        <strong style="color:var(--navy);">👋 Hello! I am your AI Finance Controller.</strong>
+        <strong style="color:var(--navy);">Hello! I am your AI Finance Controller.</strong>
         <p style="margin-top:4px;color:var(--text-secondary);">Ask me anything about your GST books, Rule 88D risk, Section 16(4) lapse, or delinquent vendors.</p>
         <div class="prompt-chips-chat">
           <button class="prompt-chip-chat" onclick="sendQuickPrompt('Who are our top risk suppliers?')">Who are our top risk suppliers?</button>
@@ -3147,7 +3356,7 @@ _DASHBOARD_HTML = """<!doctype html>
     function copyDraft(elemId) {
       var text = document.getElementById(elemId).innerText;
       navigator.clipboard.writeText(text).then(function() {
-        showToast("✓ Demand Notice copied to clipboard!");
+        showToast("Demand Notice copied to clipboard!");
       });
     }
 
@@ -3301,6 +3510,69 @@ class Handler(BaseHTTPRequestHandler):
 
         if path in ("/app", "/workspace"):
             return self._send(_APP_HTML.replace("__CSS__", _CSS).replace("__MARK__", _MARK))
+
+        if path == "/demo-data/download" or path.startswith("/demo-data/"):
+            demo_dir = Path(__file__).resolve().parent / "demo data"
+            qs = urllib.parse.parse_qs(parsed.query)
+            file_key = qs.get("file", [""])[0].lower()
+            if not file_key:
+                subname = path.replace("/demo-data/", "").strip().lower()
+                if "gstr2a" in subname:
+                    file_key = "gstr2a"
+                elif "purchase" in subname:
+                    file_key = "purchase"
+                elif "3b" in subname:
+                    file_key = "gstr3b"
+                elif "all" in subname or "zip" in subname:
+                    file_key = "all"
+
+            file_map = {
+                "gstr2a": ("GSTR2A.xlsx", demo_dir / "GSTR2A.xlsx"),
+                "purchase": ("Purchase register.xlsx", demo_dir / "Purchase register.xlsx"),
+                "gstr3b": ("GSTR3B.xlsx", demo_dir / "GSTR3B.xlsx"),
+            }
+
+            if file_key in file_map:
+                fname, fpath = file_map[file_key]
+                if fpath.exists():
+                    data = fpath.read_bytes()
+                    try:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                        self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+                        self.send_header("Content-Length", str(len(data)))
+                        self.send_header("Cache-Control", "public, max-age=3600")
+                        self.end_headers()
+                        self.wfile.write(data)
+                    except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+                        self.close_connection = True
+                    return
+                else:
+                    return self._send("File not found on server", 404)
+            elif file_key == "all":
+                bio = io.BytesIO()
+                with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for item_name, item_path in [
+                        ("GSTR2A.xlsx", demo_dir / "GSTR2A.xlsx"),
+                        ("Purchase register.xlsx", demo_dir / "Purchase register.xlsx"),
+                        ("GSTR3B.xlsx", demo_dir / "GSTR3B.xlsx"),
+                    ]:
+                        if item_path.exists():
+                            zf.write(item_path, arcname=item_name)
+                zip_bytes = bio.getvalue()
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/zip")
+                    self.send_header("Content-Disposition", 'attachment; filename="Milan_Demo_Working_Papers.zip"')
+                    self.send_header("Content-Length", str(len(zip_bytes)))
+                    self.send_header("Cache-Control", "public, max-age=3600")
+                    self.end_headers()
+                    self.wfile.write(zip_bytes)
+                except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+                    self.close_connection = True
+                return
+            else:
+                return self._send("Invalid demo file requested", 400)
 
         if path in ("/demo", "/reconcile"):
             self.send_response(302)
@@ -3748,7 +4020,7 @@ def _render_finops_dashboard(token, tally, gstr, res, twp, gstr3b, forecast, ven
               {idx}. {html.escape(ca.recipient)} ({ca.facts['invoice_count']} unfiled invoice(s))
             </div>
             <div style="display:flex;align-items:center;gap:8px;">
-              <span class="seal-verified">✓ 100% Fact Verified</span>
+              <span class="seal-verified"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="vertical-align:text-bottom;margin-right:4px;"><polyline points="20 6 9 17 4 12"></polyline></svg>100% Fact Verified</span>
               <button class="btn-copy" onclick="copyDraft('draft-{idx}')">Copy Notice</button>
             </div>
           </div>

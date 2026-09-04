@@ -1,4 +1,4 @@
-﻿# 🚀 Milan — Production Deployment Guide
+﻿# Milan — Production Deployment Guide
 
 Milan is engineered with **zero external pip dependencies** and runs entirely on the **Python 3.10+ standard library**.
 
@@ -6,7 +6,7 @@ Because Milan performs heavy in-memory financial matching (10,000+ invoices in s
 
 ---
 
-## 🌟 Recommended Deployment Options
+## Recommended Deployment Options
 
 ### Option 1: Render / Railway / Fly.io (Fastest 1-Click Cloud Deployment)
 These platforms run persistent Docker containers, handle automatic HTTPS/SSL certificates, and respect the `$PORT` environment variable out of the box.
@@ -92,7 +92,7 @@ For Chartered Accountant firms that want **100% data residency** inside the offi
 
 ---
 
-## 🔒 Security & Privacy Guarantees
+## Security & Privacy Guarantees
 - **Zero Cloud Telemetry**: Milan never makes external API requests or transmits client financial records to third parties.
 - **Automated Session Eviction**: Uploaded sessions are automatically purged after 2 hours or when exceeding capacity, preventing disk bloat.
 - **Security Headers**: Standard `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, and strict referrer policy enabled.

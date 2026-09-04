@@ -1,4 +1,4 @@
-# 🎬 Milan — 3-Minute Video Recording & Demo Script
+# Milan — 3-Minute Video Recording & Demo Script
 **Track 04: AI Finance Controller — "Run the books and the cash position"**
 
 ---
@@ -16,7 +16,7 @@
 
 ---
 
-## 🎙️ Scene-by-Scene Script & What to Show on Screen
+## Scene-by-Scene Script & What to Show on Screen
 
 ### Scene 1: The Problem (0:00 – 0:30)
 * **What to Show**: Start on Milan Homepage (`http://127.0.0.1:8000`), hovering over the sleek dark upload zone.
@@ -30,7 +30,7 @@
 ---
 
 ### Scene 2: 3-Way Match & Table 8 Finding (0:30 – 1:15)
-* **What to Show**: Click the **"🚀 Try Live Enterprise Demo"** button (or upload 2A + DayBook + 3B). Instantly land on the **Reconciliation & Table 8** tab.
+* **What to Show**: Click the **"Try Live Enterprise Demo"** button (or upload 2A + DayBook + 3B). Instantly land on the **Reconciliation & Table 8** tab.
 * **What to Say**:
   > *"In under 50 milliseconds, Milan ingests GSTR-2A, Tally DayBooks, and filed GSTR-3B returns across 550+ transactions.*
   >
@@ -41,7 +41,7 @@
 ---
 
 ### Scene 3: Rule 88D Shield & Cash Forecaster (1:15 – 1:45)
-* **What to Show**: Click on **Tab 2: 🛡️ Rule 88D & Cash Forecaster**.
+* **What to Show**: Click on **Tab 2: Rule 88D & Cash Forecaster**.
 * **What to Say**:
   > *"Next, the controller's biggest fear: getting automated Form DRC-01C notices for excess ITC claims.*
   >
@@ -51,8 +51,8 @@
 
 ### Scene 4: Vendor IMS Matrix & 1-Click Legal Drafter (1:45 – 2:20)
 * **What to Show**:
-  1. Click **Tab 3: 🏢 Vendor IMS Matrix**, type in the search bar.
-  2. Click **Tab 4: ⚖️ Dispute Notice Drafter**, click "Copy Notice" to show the toast notification.
+  1. Click **Tab 3: Vendor IMS Matrix**, type in the search bar.
+  2. Click **Tab 4: Dispute Notice Drafter**, click "Copy Notice" to show the toast notification.
 * **What to Say**:
   > *"In Tab 3, Milan grades every supplier from A to D based on filing timeliness and multi-state PAN conflicts, giving clear Invoice Management System (IMS) directives: Accept, Hold, or Reject.*
   >

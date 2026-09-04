@@ -172,7 +172,7 @@ def ask_copilot(
                 f"<li><strong>GSTR-3B Claimed:</strong> {rupees(twp.claimed_3b)}</li>"
                 f"</ul>"
                 f"<p style='color:#1e40af;font-weight:700;background:#eff6ff;padding:10px;border-radius:6px;'>"
-                f"🎯 Key Finding: Matched but Never Claimed = {rupees(twp.matched_unclaimed)}"
+                f"Key Finding: Matched but Never Claimed = {rupees(twp.matched_unclaimed)}"
                 f"</p>"
                 f"<p><strong>Honesty Caveat:</strong> The {rupees(twp.gap_2a_3b)} total gap between 2A and 3B includes "
                 f"statutory non-B2B credits (Imports, ISD, RCM) which do not appear in GSTR-2A B2B section.</p>"
