@@ -202,7 +202,7 @@ def _col_styles(rows: list[list], cols: list[int], style: int, first_data_row: i
 def _sheet_totals(res: Result, tally: list[Invoice], gstr: list[Invoice]) -> dict:
     unclaimed = classify_unclaimed(res, tally)
     ineligible = classify_ineligible(res, gstr)
-    not_in_tally = unclaimed.get("missing_invoice", []) + unclaimed.get("unrecorded_credit_note", [])
+    not_in_tally = unclaimed.get("missing_invoice", [])
     not_in_2a = ineligible.get("not_filed", []) + ineligible.get("supplier_absent", [])
     other_ledgers = unclaimed.get("supplier_absent", [])
     conflicts = pan_conflicts(res, tally, gstr)
@@ -248,10 +248,13 @@ def _build_summary(t: dict, days_left: int, matched_count: int, twp: ThreeWayPos
     return summary_rows
 
 
-def _build_itc_position_rows(twp: ThreeWayPosition, gstr3b: GSTR3BSummary) -> list[list]:
+def _build_itc_position_rows(twp: ThreeWayPosition, gstr3b: GSTR3BSummary | dict | None) -> list[list]:
+    c_name = getattr(gstr3b, "name", None) or (gstr3b.get("name") if isinstance(gstr3b, dict) else "") or "(client)"
+    c_gstin = getattr(gstr3b, "gstin", None) or (gstr3b.get("gstin") if isinstance(gstr3b, dict) else "") or "-"
+    c_fy = getattr(gstr3b, "fy", None) or (gstr3b.get("fy") if isinstance(gstr3b, dict) else "") or "-"
     rows = [
         ["Milan - Three-Way ITC Position & Month-by-Month Schedule", "", "", "", "", ""],
-        [f"Client: {gstr3b.name or '(client)'} | GSTIN: {gstr3b.gstin or '-'} | FY: {gstr3b.fy or '-'}", "", "", "", "", ""],
+        [f"Client: {c_name} | GSTIN: {c_gstin} | FY: {c_fy}", "", "", "", "", ""],
         ["", "", "", "", "", ""],
         ["Three-Way Position (Table 8 Shape)", "Amount (Rs)", "Notes / Legal Basis", "", "", ""],
         ["GSTR-2A Available (Table 8A)", twp.available_2a, "Total inward B2B supplies on GST portal", "", "", ""],

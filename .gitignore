@@ -10,3 +10,11 @@ milan/Data/
 *.xlsx
 *.csv
 !milan/Data/.gitkeep
+
+# Temporary brand tracing assets
+brand/*.png
+brand/*_color.svg
+brand/*_raw.svg
+brand/*_standalone.svg
+brand/*_vectorized.svg
+brand/*_trace*

@@ -364,13 +364,35 @@ def compute_three_way_position(
         m_d = _month_of_date(inv.inv_date)
         tally_by_date[m_d] += inv.tax
 
+    months_dict = {}
+    claimed_3b = 0.0
+    if gstr3b is not None:
+        if isinstance(gstr3b, dict):
+            months_dict = gstr3b.get("months") if isinstance(gstr3b.get("months"), dict) else gstr3b
+            claimed_3b = float(gstr3b.get("total_itc_non_rev", sum(
+                getattr(v, "itc_non_rev", 0.0) if hasattr(v, "itc_non_rev") else (v if isinstance(v, (int, float)) else 0.0)
+                for v in months_dict.values()
+            )))
+        else:
+            months_dict = getattr(gstr3b, "months", None) or getattr(gstr3b, "monthly_data", None) or {}
+            claimed_3b = float(getattr(gstr3b, "total_itc_non_rev", 0.0))
+
     monthly_positions: list[MonthPosition] = []
     for m in FY_MONTHS:
         c_2a_d = round(g2a_by_date[m], 2)
         c_2a_fp = round(g2a_by_fp[m], 2)
         c_tally = round(tally_by_date[m], 2)
-        m_3b = gstr3b.months.get(m)
-        c_3b = round(m_3b.itc_non_rev if m_3b else 0.0, 2)
+        m_3b = months_dict.get(m)
+        if m_3b is None:
+            c_3b = 0.0
+        elif hasattr(m_3b, "itc_non_rev"):
+            c_3b = round(float(m_3b.itc_non_rev), 2)
+        elif isinstance(m_3b, dict):
+            c_3b = round(float(m_3b.get("itc_non_rev", 0.0)), 2)
+        elif isinstance(m_3b, (int, float)):
+            c_3b = round(float(m_3b), 2)
+        else:
+            c_3b = 0.0
         var = round(c_3b - c_2a_fp, 2)
         monthly_positions.append(MonthPosition(
             month=m,
@@ -384,7 +406,7 @@ def compute_three_way_position(
     available_2a = round(sum(i.tax for i in b2b_gstr), 2)
     booked_tally = round(sum(i.tax for i in tally), 2)
     matched_tax = round(sum(p.gstr.tax for p in res.pairs), 2)
-    claimed_3b = round(gstr3b.total_itc_non_rev, 2)
+    claimed_3b = round(claimed_3b, 2)
 
     return ThreeWayPosition(
         available_2a=available_2a,

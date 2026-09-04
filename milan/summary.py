@@ -55,9 +55,9 @@ def write_bill_summary(path: str, tally: list[Invoice], gstr: list[Invoice], res
     conflicts = pan_conflicts(res, tally, gstr)
 
     parts = [
-        "# Heamons -- GST ITC Reconciliation, Bill by Bill (FY 2025-26)",
+        "# GST ITC Reconciliation, Bill by Bill Review",
         "",
-        "**Confidential client data. For internal review only.**",
+        "**Confidential working papers. For internal audit review only.**",
         "",
         "Backs the four-bucket summary with the actual invoices in each one. "
         "Sorted largest first within each table.",
@@ -67,8 +67,8 @@ def write_bill_summary(path: str, tally: list[Invoice], gstr: list[Invoice], res
         f"## 1. Claim before 30 November 2026 -- {rupees(sum(r.tax for r in claim_now))}, "
         f"{len(claim_now)} bills",
         "",
-        "In GSTR-2A, never booked in Tally. The supplier reported selling this to "
-        "Heamons; nobody entered it in the books. This is the credit that expires.",
+        "In GSTR-2A, never booked in books. The supplier reported selling this; "
+        "nobody entered it in the books. This is the credit that expires.",
         "",
         _bill_table(claim_now),
         "",

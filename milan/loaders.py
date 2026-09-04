@@ -1,6 +1,6 @@
 """Loaders for real GSTR-2A and Tally exports.
 
-Built directly against a real client's files (Heamons, FY 2025-26), not
+Built directly against real multi-sheet accounting exports (FY 2025-26), not
 against guessed schemas. Two things the guess would have gotten wrong:
 
   1. GSTR-2A's header is two merged rows -- a group row and a sub-header row
@@ -95,28 +95,58 @@ def _f(v) -> float:
         return 0.0
 
 
-def _parse_ddmmyyyy(s: str):
-    from datetime import datetime
-
-    return datetime.strptime(s.strip(), "%d-%m-%Y").date()
+def _parse_ddmmyyyy(s):
+    if not s:
+        return None
+    from datetime import date, datetime
+    if isinstance(s, date):
+        return s
+    s_clean = str(s).strip()
+    try:
+        f_val = float(s_clean)
+        if 20000 < f_val < 70000:
+            return excel_serial_to_date(f_val)
+    except (ValueError, TypeError):
+        pass
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y", "%d/%m/%y", "%d-%m-%y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(s_clean, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def load_gstr2a(path: str) -> list[Invoice]:
-    """The 'B2B - Only Invoice wise' sheet: one row per invoice, tax already
-    aggregated across rate slabs. ('B2B - Invoice & Rate wise' has one row
-    per rate slab per invoice and would need summing first -- deliberately
-    not used, the portal already did that work for us.)
+    """Load GSTR-2A or GSTR-2B portal exports.
+    
+    Supports multi-sheet annual portal summaries ('Only Invoice' sheet with 2-row merged header)
+    as well as standard B2B/2A/2B sheets with 1-row or 2-row headers.
     """
     wb = Workbook(path)
-    sheet = wb.find_sheet("Only Invoice")
+    try:
+        sheet = wb.find_sheet("Only Invoice")
+    except (KeyError, ValueError):
+        sheet = next(
+            (n for n in wb.sheet_names() if any(k in n.lower() for k in ["b2b", "only invoice", "2a", "2b", "inward"])),
+            wb.sheet_names()[0],
+        )
     rows = list(wb.rows(sheet))
 
-    header_rows = [r for r in rows if r.get("A") == "GSTIN of supplier" or r.get("C") == "Invoice number"]
-    if len(header_rows) < 2:
-        raise ValueError(f"expected a 2-row GSTR-2A header in {sheet!r}, found {len(header_rows)}")
-    cols = header_map(header_rows, _GSTR2A_KEYS, merge_rows=len(header_rows))
+    # Look for header rows (multi-row portal summaries vs single-row exports)
+    header_rows = [
+        r for r in rows[:15]
+        if any(w in "".join(str(v or "") for v in r.values()).lower() for w in ["gstin of supplier", "gstin", "invoice number"])
+    ]
+    if not header_rows and rows:
+        header_rows = [rows[0]]
+    if not header_rows:
+        raise ValueError(f"expected header row in {sheet!r}, found 0")
 
+    cols = header_map(header_rows, _GSTR2A_KEYS, merge_rows=len(header_rows))
     by_field = {v: k for k, v in cols.items()}
+    if "gstin" not in by_field or "inv_no" not in by_field:
+        raise ValueError(f"GSTR-2A/2B sheet {sheet!r} is missing required GSTIN or invoice number columns")
+
     # Filing period column if present (e.g. Col O "Filing Period")
     fp_col = next((col for r in header_rows for col, val in r.items()
                    if val and "filing period" in str(val).lower() and "gstr" not in str(val).lower()), None)
@@ -127,24 +157,27 @@ def load_gstr2a(path: str) -> list[Invoice]:
     out = []
     for i, r in enumerate(rows):
         gstin = r.get(by_field["gstin"])
-        date_raw = r.get(by_field["inv_date"])
-        # Title rows ("Goods and Services Tax - GSTR 2A", section headings)
-        # land text in column A too, so a truthy GSTIN alone doesn't identify
-        # a data row -- every real data row also has a date; no title row does.
-        if not gstin or not date_raw or gstin == "GSTIN of supplier":
+        date_raw = r.get(by_field.get("inv_date"))
+        if not gstin or not date_raw:
+            continue
+        gstin_str = str(gstin).strip().upper()
+        if "GSTIN" in gstin_str or "SUPPLIER" in gstin_str:
+            continue
+        parsed_date = _parse_ddmmyyyy(date_raw)
+        if not parsed_date:
             continue
         fp = (r.get(fp_col) or "").strip() if fp_col else ""
         out.append(
             Invoice(
-                gstin=gstin.strip().upper(),
-                supplier=(r.get(by_field["supplier"]) or "").strip(),
-                inv_no=(r.get(by_field["inv_no"]) or "").strip(),
-                inv_date=_parse_ddmmyyyy(date_raw),
-                taxable=_f(r.get(by_field["taxable"])),
-                igst=_f(r.get(by_field["igst"])),
-                cgst=_f(r.get(by_field["cgst"])),
-                sgst=_f(r.get(by_field["sgst"])),
-                cess=_f(r.get(by_field["cess"])),
+                gstin=gstin_str,
+                supplier=(str(r.get(by_field.get("supplier", "")) or "")).strip(),
+                inv_no=(str(r.get(by_field["inv_no"]) or "")).strip(),
+                inv_date=parsed_date,
+                taxable=_f(r.get(by_field.get("taxable"))),
+                igst=_f(r.get(by_field.get("igst"))),
+                cgst=_f(r.get(by_field.get("cgst"))),
+                sgst=_f(r.get(by_field.get("sgst"))),
+                cess=_f(r.get(by_field.get("cess"))),
                 filing_period=fp,
                 source="2A",
                 row_id=f"2A{i:06d}",
@@ -161,7 +194,7 @@ def _load_gstr2a_cdnr(wb: Workbook) -> list[Invoice]:
     """Parse Credit / Debit Notes from the CDNR sheet of GSTR-2A if present.
     Credit notes (Type 'C') reduce ITC and are loaded with negative tax/taxable values,
     aligning with accounting books."""
-    sheet = next((s for s in wb.sheet_names() if s.strip().upper() == "CDNR"), None)
+    sheet = next((s for s in wb.sheet_names() if "cdnr" in s.strip().lower()), None)
     if not sheet:
         return []
     rows = list(wb.rows(sheet))

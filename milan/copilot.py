@@ -273,3 +273,82 @@ def ask_copilot(
             "Download the complete 6-Sheet Audit Review Workbook.",
         ],
     )
+
+
+# --- Serverless support ----------------------------------------------------
+#
+# On Vercel each request may land on a different, cold instance, so the
+# reconciliation cannot be held in memory between the upload and a later
+# copilot question. Rather than round-trip the state (unpickling anything a
+# browser sends is remote code execution) or re-upload the files per question,
+# every answer is computed once at reconcile time and embedded in the page.
+#
+# ask_copilot is unchanged and still produces every answer -- this only calls
+# it once per topic up front. The keyword lists are the same ones it routes on,
+# declared here so the client can do the identical matching offline.
+
+COPILOT_TOPICS: list[tuple[str, tuple[str, ...], str]] = [
+    ("vendor_risk",
+     ("top risk", "risk vendor", "worst supplier", "delinquent", "chase",
+      "unfiled supplier", "vendor risk", "who owes"),
+     "Who are our top risk suppliers?"),
+    ("lapse_16_4",
+     ("16(4)", "16 4", "lapse", "november 30", "unclaimed", "missing in books",
+      "not in tally", "forgot to book"),
+     "How much ITC lapses under section 16(4)?"),
+    ("rule_88d",
+     ("88d", "88 d", "drc-01c", "drc01c", "drc 01c", "notice", "scrutiny",
+      "excess claim"),
+     "What is our Rule 88D notice risk?"),
+    ("cash_forecast",
+     ("cash", "outflow", "forecast", "how much pay", "liability",
+      "working capital", "pay next month"),
+     "Forecast our next month cash outflow"),
+    ("three_way",
+     ("three way", "3 way", "table 8", "3b gap", "matched but never",
+      "why gap", "difference between 2a and 3b"),
+     "Explain the Table 8 three-way gap"),
+    ("pan_conflict",
+     ("pan", "multi-state", "multi state", "dual", "wrong gstin", "haryana",
+      "maharashtra"),
+     "Show multi-state PAN conflicts"),
+    ("section_50",
+     ("section 50", "interest", "penalty", "18%", "ineligible"),
+     "What is our section 50 interest exposure?"),
+]
+
+
+def precompute_copilot(
+    tally: Sequence[Invoice],
+    gstr: Sequence[Invoice],
+    res: Result,
+    twp: ThreeWayPosition | None,
+    gstr3b: GSTR3BSummary | None,
+    forecast: FinOpsForecastReport,
+    vendors: list[VendorScorecard],
+    ims_summary: IMSAggregateSummary,
+) -> dict:
+    """Every copilot answer, computed once, ready to embed in the page.
+
+    Returns {"topics": [{id, keywords, headline, answer_html, action_items}],
+             "fallback": {...}} -- the fallback is the same general overview
+    ask_copilot returns for an unrecognised question.
+    """
+    def run(query: str) -> CopilotResponse:
+        return ask_copilot(query, tally, gstr, res, twp, gstr3b,
+                           forecast, vendors, ims_summary)
+
+    def pack(r: CopilotResponse) -> dict:
+        return {
+            "headline": r.headline,
+            "answer_html": r.answer_html,
+            "action_items": list(r.action_items),
+        }
+
+    topics = []
+    for topic_id, keywords, canonical in COPILOT_TOPICS:
+        answer = run(canonical)
+        topics.append({"id": topic_id, "keywords": list(keywords), **pack(answer)})
+
+    # A query matching no keyword list falls through to the overview.
+    return {"topics": topics, "fallback": pack(run("__general_overview__"))}

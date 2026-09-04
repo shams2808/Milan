@@ -1,33 +1,68 @@
-# 🚀 Deploying Milan to Vercel in 60 Seconds
+# Deploying Milan to Vercel
 
-Milan is fully configured for 1-click serverless deployment on **Vercel** with zero external dependencies.
-
----
-
-## 🛠️ Step-by-Step Instructions
-
-### Option A: Deploy via GitHub (Recommended)
-1. Push your latest code to your GitHub repo (`shams2808/Milan`).
-2. Go to [https://vercel.com/new](https://vercel.com/new).
-3. Import your `Milan` repository.
-4. Keep the default settings (Framework Preset: **Other**, Root Directory: `./`).
-5. Click **Deploy**.
-6. Vercel will build your serverless Python app and give you a live production URL (e.g. `https://milan-gst.vercel.app`)!
+Milan runs on Vercel as a Python serverless function. Zero external
+dependencies — `requirements.txt` is empty on purpose.
 
 ---
 
-### Option B: Deploy via Vercel CLI
-If you have Vercel CLI installed:
+## 1. Set the password FIRST
+
+Milan handles a real client's GSTINs, supplier list and complete tax position.
+A Vercel URL is public: without a password, anyone who has the link can upload,
+reconcile and download.
+
+In **Vercel → Project → Settings → Environment Variables**, add:
+
+| Name | Value |
+|---|---|
+| `MILAN_PASSWORD` | a password you choose |
+
+Apply it to **Production, Preview and Development**.
+
+The browser then asks for it once per session (username is ignored, any value
+works). Leaving the variable unset disables the gate entirely — correct for
+running locally on `127.0.0.1`, wrong for anything with a public URL.
+
+## 2. Deploy
+
+**Via GitHub:** push, then import the repo at [vercel.com/new](https://vercel.com/new).
+Framework Preset **Other**, Root Directory `./`, Deploy.
+
+**Via CLI:** `npm i -g vercel && vercel`
+
+---
+
+## What the deployment actually does
+
+Serverless instances are cold, short-lived and don't share memory, so **nothing
+is stored between requests**. One upload does the whole job, and the page it
+returns carries everything it will still need:
+
+- the six-sheet workbook and the findings CSV, embedded and downloaded from the
+  browser's own memory
+- every Co-Pilot answer, precomputed by the same `ask_copilot()` the CLI uses,
+  answered instantly with no round trip
+
+The practical consequence: a download still works after the instance that
+produced it is gone. An earlier build kept results in a module-level dict and
+`/tmp`, which works on a laptop and fails intermittently on Vercel — the
+reconciliation would display and then "Session expired" on download, depending
+on which instance answered.
+
+## Limits worth knowing
+
+| Limit | Value | Why |
+|---|---|---|
+| Upload size | **4 MB** total | Vercel rejects request bodies over 4.5 MB at the edge, before this code runs. Milan refuses just under it so you get a readable message instead of a platform error. |
+| Page weight | ~230 KB typical | The workbook and CSV ride inside the HTML. Fine at a few thousand invoices; a client 10× larger would want object storage instead. |
+| Execution time | 10 s (Hobby) | A 4,500-invoice reconciliation runs in about 2 s. |
+
+## Running locally instead
+
 ```bash
-npm install -g vercel
-vercel
+python -m milan.web
 ```
-Follow the prompts and select default options.
 
----
-
-## 🌟 What Your Father / Users Can Do on the Live URL:
-1. **1-Click Demo**: Click *"🚀 Try Live Enterprise Demo"* to immediately explore ₹5.74 Cr real enterprise reconciliation.
-2. **Upload Real Books**: Drag-and-drop any GSTR-2A annual summary + Tally DayBook + GSTR-3B.
-3. **Export 6-Sheet Excel**: Download the complete review workbook.
-4. **Use Co-Pilot Chat**: Ask any tax or cash forecasting question via the floating assistant.
+Serves on `http://127.0.0.1:8000`, bound to localhost only. No password needed,
+and client data never leaves the machine — which for a practice handling other
+people's books is a legitimate choice, not a lesser one.

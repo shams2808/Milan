@@ -25,7 +25,23 @@ _EPOCH = date(1899, 12, 30)
 
 
 def excel_serial_to_date(serial) -> date:
-    return _EPOCH + timedelta(days=int(float(serial)))
+    if serial is None:
+        return _EPOCH
+    if isinstance(serial, date):
+        return serial
+    from datetime import datetime
+    s_clean = str(serial).strip()
+    try:
+        f_val = float(s_clean)
+        return _EPOCH + timedelta(days=int(f_val))
+    except (ValueError, TypeError):
+        pass
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%b-%Y", "%d-%b-%y", "%d/%m/%y", "%d-%m-%y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(s_clean, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f"cannot parse date from {serial!r}")
 
 
 class Workbook:

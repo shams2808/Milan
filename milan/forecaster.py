@@ -173,11 +173,19 @@ def forecast_cash_position(
     unfiled = ineligible.get("not_filed", []) + ineligible.get("supplier_absent", [])
     trapped_capital = sum(i.tax for i in unfiled)
 
-    if gstr3b and len(gstr3b.months) > 0:
+    months = getattr(gstr3b, "months", None) or getattr(gstr3b, "monthly_data", None)
+    if months is None and isinstance(gstr3b, dict):
+        months = gstr3b.get("months") or gstr3b
+
+    if gstr3b and months and len(months) > 0:
         # Based on filed 3B return history
-        avg_liability = gstr3b.total_tax_liability / len(gstr3b.months)
-        avg_verified_itc = sum(p.gstr.tax for p in res.pairs) / max(1, len(gstr3b.months))
-        closing_bal = gstr3b.closing_balance
+        tot_liab = getattr(gstr3b, "total_tax_liability", None)
+        if tot_liab is None and isinstance(gstr3b, dict):
+            tot_liab = gstr3b.get("total_tax_liability", 0.0)
+        tot_liab = float(tot_liab or 0.0)
+        avg_liability = tot_liab / len(months)
+        avg_verified_itc = sum(p.gstr.tax for p in res.pairs) / max(1, len(months))
+        closing_bal = float(getattr(gstr3b, "closing_balance", 0.0) or (gstr3b.get("closing_balance", 0.0) if isinstance(gstr3b, dict) else 0.0) or 0.0)
     else:
         # Based on Tally booked activity
         total_tally_tax = sum(i.tax for i in tally)
