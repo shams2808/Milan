@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import html
 import base64
-import hmac
 import json
 import os
 import shutil
@@ -72,11 +71,6 @@ _FAVICON = (
 # message instead of an opaque platform 413.
 MAX_UPLOAD = 4 * 1024 * 1024
 
-# Set MILAN_PASSWORD in the deployment environment to require a shared password.
-# Left unset (local use) the app is open, which is correct when it is bound to
-# 127.0.0.1 and wrong the moment it has a public URL. This handles a real
-# client's GSTINs, supplier list and complete tax position.
-_PASSWORD = os.environ.get("MILAN_PASSWORD", "").strip()
 # Nothing is retained between requests. Every response is self-contained --
 # workbook, CSV and Co-Pilot answers are embedded in the page it returns -- so
 # the client's books are parsed, reported on, and erased inside one request.
@@ -2108,7 +2102,7 @@ _LANDING_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg"><title>मिलान — 2-Hour GST Reconciliation in 5 Minutes</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg"><title>मिलान — Annual GST ITC Reconciliation</title>
   <style>__CSS__</style>
 </head>
 <body>
@@ -2130,14 +2124,14 @@ _LANDING_HTML = """<!doctype html>
     <!-- Story Hero Section -->
     <section class="story-hero">
       <div class="story-pill">
-        <span>⚡</span> 2 Hours of Grunt Work &rarr; 5 Minutes of Autonomous Precision
+        <span>⚡</span> Long Hours of Manual Matching &rarr; One Reconciled Workbook
       </div>
       <h1 class="story-headline">
-        Your 2-Hour GST Reconciliation Headache.<br>
-        Done in 5 Minutes with <span class="story-highlight">मिलान</span>.
+        Your Long Hours of GST Reconciliation.<br>
+        Done in one pass with <span class="story-highlight">मिलान</span>.
       </h1>
       <p class="story-lead">
-        Every month, audit teams waste endless billable hours manually cross-checking purchase registers against GSTR-2A/2B. Spotting invoice typos like <code>UP0068</code> vs <code>UPNUP0068</code>, off-by-one voucher slips, and vendor branch splits by hand is exhausting. <strong>मिलान</strong> eliminates the ordeal with local-first, multi-permutation matching.
+        Every month, audit teams waste endless billable hours manually cross-checking purchase registers against GSTR-2A/2B. Spotting invoice typos like <code>UP0068</code> vs <code>UPNUP0068</code>, off-by-one voucher slips, and vendor branch splits by hand is exhausting. <strong>मिलान</strong> eliminates the ordeal with deterministic, multi-permutation matching.
       </p>
       <div class="story-cta-row">
         <a href="/app" class="btn-primary-hero">
@@ -2145,7 +2139,7 @@ _LANDING_HTML = """<!doctype html>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
         </a>
         <div class="story-cta-sub">
-          100% Confidential &middot; Runs locally on your machine &middot; No cloud upload &middot; Export 6-sheet audit Excel
+          Nothing stored &middot; Files erased the moment your report is returned &middot; Export 6-sheet audit Excel
         </div>
       </div>
     </section>
@@ -2153,16 +2147,16 @@ _LANDING_HTML = """<!doctype html>
     <!-- Key Metrics Summary Bar -->
     <div class="metrics-summary-bar">
       <div class="metric-item-card green">
-        <div class="metric-stat">2h &rarr; 5m</div>
-        <div class="metric-caption">Audit time slashed per client per month</div>
+        <div class="metric-stat">Hours &rarr; One Pass</div>
+        <div class="metric-caption">Manual matching time reclaimed, per client per month</div>
       </div>
       <div class="metric-item-card blue">
         <div class="metric-stat">9 Stages</div>
         <div class="metric-caption">Multi-permutation deterministic matching</div>
       </div>
       <div class="metric-item-card purple">
-        <div class="metric-stat">0% Cloud</div>
-        <div class="metric-caption">Local Python memory execution &middot; Zero leaks</div>
+        <div class="metric-stat">0 Retained</div>
+        <div class="metric-caption">Parsed in memory, erased with the response</div>
       </div>
       <div class="metric-item-card amber">
         <div class="metric-stat">6 Sheets</div>
@@ -2170,11 +2164,11 @@ _LANDING_HTML = """<!doctype html>
       </div>
     </div>
 
-    <!-- Act I vs Act II: The 2-Hour Struggle vs The 5-Minute Flow -->
+    <!-- Act I vs Act II: the manual struggle vs the reconciled flow -->
     <div class="story-grid-2">
       <!-- The Struggle -->
       <div class="story-card struggle">
-        <div class="story-card-tag">Before मिलान &middot; The 2-Hour Struggle</div>
+        <div class="story-card-tag">Before मिलान &middot; The Manual Struggle</div>
         <div class="story-card-title">Manual VLOOKUPs, Typo Hell &amp; Eyestrain</div>
         <div class="story-card-text">
           Exporting portal data and purchase registers only to spend hours manually matching cell by cell:
@@ -2184,7 +2178,7 @@ _LANDING_HTML = """<!doctype html>
             <strong>Invoice Prefix Variances:</strong> Vendor types <code>UPNUP0068</code>, accountant enters <code>UP0068</code>. Standard VLOOKUP breaks, marking both as unreconciled.
           </li>
           <li>
-            <strong>Clerical Off-By-One Slips:</strong> Voucher <code>4029</code> typed as <code>4030</code>. Two hours spent hunting down an apparent "missing" invoice.
+            <strong>Clerical Off-By-One Slips:</strong> Voucher <code>4029</code> typed as <code>4030</code>. Hours spent hunting down an apparent "missing" invoice.
           </li>
           <li>
             <strong>Multi-State Branch Splits:</strong> Supplier billed under Delhi GSTIN (<code>07...</code>) instead of Haryana (<code>06...</code>). Excel flags it as a missing vendor.
@@ -2194,13 +2188,13 @@ _LANDING_HTML = """<!doctype html>
           </li>
         </ul>
         <div class="story-card-footer struggle-footer">
-          Result: 2+ hours lost per client &middot; High clerical fatigue &middot; Scrutiny exposure
+          Result: Long hours lost per client &middot; High clerical fatigue &middot; Scrutiny exposure
         </div>
       </div>
 
       <!-- The Breakthrough -->
       <div class="story-card breakthrough">
-        <div class="story-card-tag breakthrough-tag">With मिलान &middot; The 5-Minute Flow</div>
+        <div class="story-card-tag breakthrough-tag">With मिलान &middot; The Reconciled Flow</div>
         <div class="story-card-title">Deterministic Multi-Permutation Engine</div>
         <div class="story-card-text">
           Drop your Tally/BUSY register and GSTR-2A into मिलान. It resolves discrepancies algorithmically:
@@ -2220,7 +2214,7 @@ _LANDING_HTML = """<!doctype html>
           </li>
         </ul>
         <div class="story-card-footer breakthrough-footer">
-          Result: Done in under 5 minutes &middot; Audit-proof working papers &middot; Partner ready
+          Result: Done in one pass &middot; Audit-proof working papers &middot; Partner ready
         </div>
       </div>
     </div>
@@ -2289,7 +2283,7 @@ _LANDING_HTML = """<!doctype html>
         Reclaim your audit hours today.
       </h2>
       <p style="font-size:14px;color:var(--text-light);max-width:600px;margin:0 auto 24px;line-height:1.5;">
-        Stop doing manual VLOOKUPs. Run autonomous GST reconciliation for your clients in under 5 minutes.
+        Stop doing manual VLOOKUPs. Reconcile a client's full financial year in one pass.
       </p>
       <a href="/app" class="btn-primary-white">
         Enter मिलान Workspace
@@ -3273,31 +3267,6 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
-    def _authorised(self) -> bool:
-        """HTTP Basic against MILAN_PASSWORD. No password configured means no
-        gate, which is correct when bound to 127.0.0.1 and wrong the moment the
-        app has a public URL -- it handles a real client's GSTINs, supplier
-        list and complete tax position."""
-        if not _PASSWORD:
-            return True
-        supplied = self.headers.get("Authorization", "")
-        if supplied.startswith("Basic "):
-            try:
-                decoded = base64.b64decode(supplied[6:]).decode("utf-8", "replace")
-                _, _, pw = decoded.partition(":")
-                if hmac.compare_digest(pw, _PASSWORD):   # constant time
-                    return True
-            except Exception:
-                pass
-        try:
-            self.send_response(401)
-            self.send_header("WWW-Authenticate", 'Basic realm="Milan"')
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
-            self.close_connection = True
-        return False
-
     def _send(self, body: str, status: int = 200, ctype: str = "text/html; charset=utf-8") -> None:
         payload = body.encode("utf-8")
         try:
@@ -3324,8 +3293,6 @@ class Handler(BaseHTTPRequestHandler):
             except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
                 self.close_connection = True
             return
-        if not self._authorised():
-            return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
@@ -3344,8 +3311,6 @@ class Handler(BaseHTTPRequestHandler):
         self._send("Page not found", 404)
 
     def do_POST(self) -> None:
-        if not self._authorised():
-            return
         if self.path != "/reconcile":
             return self._send(_render_error_page("Page Not Found", "The requested reconciliation endpoint does not exist."), 404)
 

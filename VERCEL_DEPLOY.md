@@ -1,80 +1,62 @@
 # Deploying Milan to Vercel
 
-Milan runs on Vercel as a Python serverless function. Zero external
-dependencies — `requirements.txt` is empty on purpose.
+Python serverless function, no external dependencies — `requirements.txt` is
+empty on purpose.
 
 ---
 
-## 1. Password — optional, and here is what it does and does not buy
+## Deploy
 
-Milan keeps **nothing** between requests. One upload is parsed, reported on,
-and erased inside a single request: the response carries the workbook, the CSV
-and every Co-Pilot answer inside itself, and the uploaded files and everything
-derived from them are deleted before the reply is sent. There is no session
-table and no `/download/{token}` route to leak one.
-
-So a password is **not** protecting stored client data — there is none.
-
-What it still buys:
-
-- **Compute control.** A public URL means anyone can spend your Vercel
-  invocations. On the Hobby tier that is a quota, not a bill, but it is yours.
-- **Not being an open GST tool on the internet** under your parents' practice.
-
-Leave it off and the honest risk is a stranger reconciling their own files at
-your expense. Turn it on by adding, in **Vercel → Settings → Environment
-Variables**:
-
-| Name | Value |
-|---|---|
-| `MILAN_PASSWORD` | a password you choose |
-
-The browser then asks once per session (any username; only the password is
-checked). Unset means no gate, which is also correct for local use.
-
-## 2. Deploy
-
-**Via GitHub:** push, then import the repo at [vercel.com/new](https://vercel.com/new).
-Framework Preset **Other**, Root Directory `./`, Deploy.
+**Via GitHub:** push, then import the repo at
+[vercel.com/new](https://vercel.com/new). Framework Preset **Other**, Root
+Directory `./`, Deploy.
 
 **Via CLI:** `npm i -g vercel && vercel`
 
+Nothing to configure. No environment variables, no password, no database.
+
 ---
 
-## What the deployment actually does
+## How it stays safe without a login
 
-Serverless instances are cold, short-lived and don't share memory, so **nothing
-is stored between requests**. One upload does the whole job, and the page it
-returns carries everything it will still need:
+Milan keeps **nothing** between requests. A reconciliation is parsed, reported
+on, and erased inside a single request:
 
-- the six-sheet workbook and the findings CSV, embedded and downloaded from the
-  browser's own memory
-- every Co-Pilot answer, precomputed by the same `ask_copilot()` the CLI uses,
-  answered instantly with no round trip
+- the response carries the workbook, the CSV and every Co-Pilot answer inside
+  itself, so the page keeps working after the instance that made it is gone
+- the uploaded files and everything derived from them are deleted **before**
+  the reply is sent
+- there is no session table, no `/download/{token}` route, and nothing on disk
+  for a later visitor's request to land on
 
-The practical consequence is two-fold: a download still works after the
-instance that produced it is gone, and **no client's books are left sitting in
-a warm instance** waiting for whoever it serves next.
+So there is no stored client data to protect, which is why there is no login.
+The one thing an open URL does cost is compute: anyone with the link can spend
+your Vercel invocations. On the Hobby tier that is a quota rather than a bill.
 
-An earlier build kept results in a module-level dict and `/tmp`. That fails
-intermittently on Vercel — the reconciliation displays, then "Session expired"
-on download, depending on which instance answers — and it retained one
-client's data for up to two hours where the next visitor's request would land.
+If you ever want to close it, Vercel offers password protection per project
+under **Settings → Deployment Protection** — no code change needed.
 
 ## Limits worth knowing
 
 | Limit | Value | Why |
 |---|---|---|
 | Upload size | **4 MB** total | Vercel rejects request bodies over 4.5 MB at the edge, before this code runs. Milan refuses just under it so you get a readable message instead of a platform error. |
-| Page weight | ~230 KB typical | The workbook and CSV ride inside the HTML. Fine at a few thousand invoices; a client 10× larger would want object storage instead. |
+| Page weight | ~230 KB typical | The workbook and CSV ride inside the HTML. Comfortable at a few thousand invoices; a client an order of magnitude larger would want object storage instead. |
 | Execution time | 10 s (Hobby) | A 4,500-invoice reconciliation runs in about 2 s. |
 
-## Running locally instead
+## Running it locally instead
 
 ```bash
 python -m milan.web
 ```
 
-Serves on `http://127.0.0.1:8000`, bound to localhost only. No password needed,
-and client data never leaves the machine — which for a practice handling other
-people's books is a legitimate choice, not a lesser one.
+Serves on `http://127.0.0.1:8000`, bound to localhost. Client files never leave
+the machine — for a practice handling other people's books that is a legitimate
+choice, not a lesser one.
+
+## A note on wording
+
+The landing page used to say *"runs locally on your machine · no cloud upload"*.
+That is true of the local command above and **false** of a hosted deployment,
+where files are uploaded to a server before being erased. The page now says what
+is true in both cases: nothing is stored, and files are erased with the response.
