@@ -338,7 +338,8 @@ def compute_three_way_position(
     g2a_by_fp: dict[str, float] = defaultdict(float)
     tally_by_date: dict[str, float] = defaultdict(float)
 
-    for inv in gstr2a:
+    b2b_gstr = [i for i in gstr2a if not i.source.endswith("CDNR")]
+    for inv in b2b_gstr:
         m_d = _month_of_date(inv.inv_date)
         m_fp = _month_of_fp(inv.filing_period, inv.inv_date)
         g2a_by_date[m_d] += inv.tax
@@ -365,7 +366,7 @@ def compute_three_way_position(
             variance_3b_2a=var,
         ))
 
-    available_2a = round(sum(i.tax for i in gstr2a), 2)
+    available_2a = round(sum(i.tax for i in b2b_gstr), 2)
     booked_tally = round(sum(i.tax for i in tally), 2)
     matched_tax = round(sum(p.gstr.tax for p in res.pairs), 2)
     claimed_3b = round(gstr3b.total_itc_non_rev, 2)

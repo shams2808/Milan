@@ -344,6 +344,102 @@ def test_three_way_position_and_timing():
     assert len(pos.monthly) == 12
 
 
+def test_forecaster_and_rule_88d():
+    from pathlib import Path
+    from .forecaster import compute_finops_forecast
+    from .loaders import load_gstr2a, load_gstr3b, load_tally
+    from .report import compute_three_way_position
+    p_2a = Path("milan/Data/Heamons/07ADQPG9909B1ZF_GSTR2A_ANNUAL_Summary(2025-2026).xlsx")
+    p_tally = Path("milan/Data/Heamons/DayBook.xlsx")
+    p_3b = Path("milan/Data/Heamons/07ADQPG9909B1ZF_GSTR3B_MONTHWISE_Summary(2025-2026).xlsx")
+    if not (p_2a.exists() and p_tally.exists() and p_3b.exists()):
+        return
+    gstr = load_gstr2a(str(p_2a))
+    tally, _ = load_tally([str(p_tally)])
+    g3b = load_gstr3b(str(p_3b))
+    res = reconcile(tally, gstr)
+    pos = compute_three_way_position(tally, gstr, res, g3b)
+    fc = compute_finops_forecast(tally, gstr, res, pos, g3b)
+
+    assert fc.rule_88d.risk_level == "SAFE"
+    assert not fc.rule_88d.is_drc01c_imminent
+    assert fc.cash_forecast.closing_itc_balance == 1491792.00
+    assert fc.sec_50_interest.annual_interest_rate == 18.0
+    assert fc.sec_50_interest.invoice_count > 0
+
+
+def test_vendor_risk_and_ims():
+    from pathlib import Path
+    from .loaders import load_gstr2a, load_tally
+    from .vendor_risk import evaluate_vendor_risk
+    p_2a = Path("milan/Data/Heamons/07ADQPG9909B1ZF_GSTR2A_ANNUAL_Summary(2025-2026).xlsx")
+    p_tally = Path("milan/Data/Heamons/DayBook.xlsx")
+    if not (p_2a.exists() and p_tally.exists()):
+        return
+    gstr = load_gstr2a(str(p_2a))
+    tally, _ = load_tally([str(p_tally)])
+    res = reconcile(tally, gstr)
+    vendors, summary = evaluate_vendor_risk(tally, gstr, res)
+
+    assert len(vendors) > 0
+    assert summary.total_vendors_analyzed == len(vendors)
+    assert summary.grade_a_count > 0
+    assert any(v.grade in ("C", "D") for v in vendors)
+    assert any(v.ims_action == "ACCEPT" for v in vendors)
+
+
+def test_copilot_deterministic_qa():
+    from pathlib import Path
+    from .copilot import ask_copilot
+    from .forecaster import compute_finops_forecast
+    from .loaders import load_gstr2a, load_gstr3b, load_tally
+    from .report import compute_three_way_position
+    from .vendor_risk import evaluate_vendor_risk
+    p_2a = Path("milan/Data/Heamons/07ADQPG9909B1ZF_GSTR2A_ANNUAL_Summary(2025-2026).xlsx")
+    p_tally = Path("milan/Data/Heamons/DayBook.xlsx")
+    p_3b = Path("milan/Data/Heamons/07ADQPG9909B1ZF_GSTR3B_MONTHWISE_Summary(2025-2026).xlsx")
+    if not (p_2a.exists() and p_tally.exists() and p_3b.exists()):
+        return
+    gstr = load_gstr2a(str(p_2a))
+    tally, _ = load_tally([str(p_tally)])
+    g3b = load_gstr3b(str(p_3b))
+    res = reconcile(tally, gstr)
+    pos = compute_three_way_position(tally, gstr, res, g3b)
+    fc = compute_finops_forecast(tally, gstr, res, pos, g3b)
+    vendors, summary = evaluate_vendor_risk(tally, gstr, res)
+
+    r1 = ask_copilot("Who are our top risk suppliers?", tally, gstr, res, pos, g3b, fc, vendors, summary)
+    assert r1.intent == "vendor_risk"
+    assert len(r1.action_items) > 0
+
+    r2 = ask_copilot("What is our Section 16(4) lapse exposure?", tally, gstr, res, pos, g3b, fc, vendors, summary)
+    assert r2.intent == "section_16_4"
+    assert "30 November" in r2.answer_html
+
+    r3 = ask_copilot("Forecast next month cash outflow", tally, gstr, res, pos, g3b, fc, vendors, summary)
+    assert r3.intent == "cash_forecast"
+
+
+def test_dispute_notice_generation():
+    from pathlib import Path
+    from .loaders import load_gstr2a, load_tally
+    from .remediate import CHASE_SUPPLIER, generate_legal_chase_notice, plan, verify_draft
+    p_2a = Path("milan/Data/Heamons/07ADQPG9909B1ZF_GSTR2A_ANNUAL_Summary(2025-2026).xlsx")
+    p_tally = Path("milan/Data/Heamons/DayBook.xlsx")
+    if not (p_2a.exists() and p_tally.exists()):
+        return
+    gstr = load_gstr2a(str(p_2a))
+    tally, _ = load_tally([str(p_tally)])
+    res = reconcile(tally, gstr)
+    actions = plan(res, tally, gstr)
+    chase = [a for a in actions if a.kind == CHASE_SUPPLIER]
+    if chase:
+        draft = generate_legal_chase_notice(chase[0])
+        assert "SECTION 16(2)(c)" in draft
+        invented = verify_draft(chase[0], draft)
+        assert len(invented) == 0, f"Invented numbers found: {invented}"
+
+
 def test_workbook_six_sheets_when_3b_present():
     import tempfile
     from pathlib import Path
@@ -366,7 +462,81 @@ def test_workbook_six_sheets_when_3b_present():
     assert len(wb.sheet_names()) == 6
     assert "ITC Position" in wb.sheet_names()
     assert "Summary" in wb.sheet_names()
-    tmp.unlink(missing_ok=True)
+
+def test_busy_register_loading_and_reconciliation():
+    from pathlib import Path
+    from .loaders import load_gstr2a, load_tally, load_books
+    from .match import reconcile
+
+    p_busy_up = Path("milan/Data/GCI/UP/Purchase register GCI-U.P.xlsx")
+    p_2a_up = Path("milan/Data/GCI/UP/09AAMFG9763A1Z4_GSTR2A_ANNUAL_Summary(2025-2026)U.P.xlsx")
+
+    if not (p_busy_up.exists() and p_2a_up.exists()):
+        return
+
+    # 1. Test load_books / load_tally on Busy
+    busy_invs, counts = load_books([str(p_busy_up)])
+    assert len(busy_invs) == 282
+    assert "B2B" in counts
+
+    # Check multi-rate aggregation on invoice 138 (Row 13 + Row 14)
+    tyre = next(i for i in busy_invs if i.inv_no == "138")
+    assert tyre.tax == 365.26
+    assert tyre.taxable == 1334.74
+
+    # 2. Test reconciliation against 2A
+    gstr = load_gstr2a(str(p_2a_up))
+    res = reconcile(busy_invs, gstr)
+    assert len(res.pairs) == 276
+    assert sum(p.gstr.tax for p in res.pairs) > 8600000
+
+    # Specifically test Nulith UPNUP0093 vs UP0093
+    nulith_pair = next(p for p in res.pairs if p.tally.inv_no == "UP0093")
+    assert nulith_pair.gstr.inv_no == "UPNUP0093"
+    assert nulith_pair.stage == "supplier_prefix_variant"
+    assert nulith_pair.tally.tax == 65901.6
+
+
+def test_supplier_prefix_variant_nulith_match():
+    """Verify that branch/software prefixes (e.g. UPNUP0093 vs UP0093)
+    match cleanly when GSTIN, tax and date agree."""
+    t = _inv("TALLY", "UP0093", tax=65901.60)
+    g = _inv("2A", "UPNUP0093", tax=65901.60)
+    res = reconcile([t], [g])
+    assert len(res.pairs) == 1
+    assert res.pairs[0].stage == "supplier_prefix_variant"
+    assert res.pairs[0].tally.inv_no == "UP0093"
+    assert res.pairs[0].gstr.inv_no == "UPNUP0093"
+
+
+def test_numeric_suffix_and_format_match():
+    """Verify that trailing document digits match (e.g. NDSPL252680791 vs 791,
+    DUN-4-1-25-26 vs DUN-4-01-25-26)."""
+    t1 = _inv("TALLY", "791", tax=2790.0, rid="t1")
+    g1 = _inv("2A", "NDSPL252680791", tax=2790.0, rid="g1")
+    res1 = reconcile([t1], [g1])
+    assert len(res1.pairs) == 1
+    assert res1.pairs[0].stage == "supplier_prefix_variant"
+
+    t2 = _inv("TALLY", "DUN-4-1-25-26", tax=4780.8, rid="t2")
+    g2 = _inv("2A", "DUN-4-01-25-26", tax=4780.8, rid="g2")
+    res2 = reconcile([t2], [g2])
+    assert len(res2.pairs) == 1
+    assert res2.pairs[0].stage == "supplier_prefix_variant"
+
+
+def test_gstr2a_cdnr_loading_and_reconciliation():
+    """Verify that CDNR sheet credit/debit notes are parsed with appropriate signs."""
+    from pathlib import Path
+    from .loaders import load_gstr2a
+    p = Path("milan/Data/GCI/UP/09AAMFG9763A1Z4_GSTR2A_ANNUAL_Summary(2025-2026)U.P.xlsx")
+    if not p.exists():
+        return
+    rows = load_gstr2a(str(p))
+    cdnr_rows = [r for r in rows if r.source == "2A_CDNR"]
+    assert len(cdnr_rows) == 17
+    assert any(r.tax < 0 for r in cdnr_rows)  # Credit notes (negative ITC)
+    assert any(r.tax > 0 for r in cdnr_rows)  # Debit notes (positive ITC)
 
 
 if __name__ == "__main__":
@@ -375,4 +545,6 @@ if __name__ == "__main__":
         t()
         print(f"  ok  {t.__name__}")
     print(f"\n{len(tests)} passed")
+
+
 

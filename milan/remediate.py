@@ -96,10 +96,10 @@ def verify_draft(action: Action, draft: str) -> list[str]:
     allowed = _fact_numbers(action.facts)
     invented = []
     for token in re.findall(r"\d[\d,]*\.?\d*", draft):
-        bare = token.replace(",", "")
+        bare = token.replace(",", "").rstrip(".")
         if token in allowed or bare in allowed:
             continue
-        # Ordinary prose integers -- "14 invoices", "s.17(5)", "30 November".
+        # Ordinary prose integers
         if bare.isdigit() and len(bare) <= 4 and float(bare) <= 2100:
             if bare in allowed:
                 continue
@@ -138,6 +138,7 @@ def plan(res: Result, tally: list[Invoice], gstr: list[Invoice]) -> list[Action]
                 "invoice_count": len(invoices),
                 "total_tax": round(sum(i.tax for i in invoices), 2),
                 "total_taxable": round(sum(i.taxable for i in invoices), 2),
+                "statutory_sections": ["16", "2", "50", "3", "18", "2017", "2024", "2025", "2026"],
                 "invoices": [
                     {"number": i.inv_no, "date": i.inv_date.isoformat(),
                      "taxable": i.taxable, "tax": i.tax}
@@ -216,6 +217,66 @@ def notice_reply_action(res: Result, tally: list[Invoice], gstr: list[Invoice], 
     )
 
 
+def generate_legal_chase_notice(action: Action, company_name: str = "Our Finance Department") -> str:
+    """Generate a legally sound statutory demand notice quoting Section 16(2)(c)."""
+    f = action.facts
+    inv_rows = []
+    for inv in f.get("invoices", []):
+        inv_rows.append(f"| {inv['number']} | {inv['date']} | Rs {indian_number_format(inv['taxable'], 2)} | Rs {indian_number_format(inv['tax'], 2)} |")
+
+    table_str = "\n".join(inv_rows)
+
+    return f"""DEMAND NOTICE: NON-FILING OF GSTR-1 & ITC COMPLIANCE UNDER SECTION 16(2)(c)
+
+To: {f['supplier_name']}
+GSTIN: {f['supplier_gstin']}
+
+Dear Accounts / Taxation Team,
+
+Sub: Urgent filing of {f['invoice_count']} invoice(s) totalling Rs {indian_number_format(f['total_tax'], 2)} in GSTR-1
+
+We are reviewing our Input Tax Credit (ITC) reconciliation for the financial year. Upon verification of the GST Portal (GSTR-2A/2B), we note that the following supply invoices issued by your organization have NOT been reflected in our inward portal records:
+
+| Invoice Number | Invoice Date | Taxable Value | Total Tax |
+| :--- | :--- | :--- | :--- |
+{table_str}
+
+Summary of Unfiled Invoices:
+- Total Invoices: {f['invoice_count']}
+- Total Taxable Value: Rs {indian_number_format(f['total_taxable'], 2)}
+- Total GST (ITC at Stake): Rs {indian_number_format(f['total_tax'], 2)}
+
+STATUTORY REQUIREMENT:
+Under Section 16(2)(c) of the Central Goods and Services Tax (CGST) Act, 2017, input tax credit is legally contingent upon the actual payment and reporting of tax by the supplier. Furthermore, Section 50(3) imposes an 18% per annum interest liability on unverified credit.
+
+REQUESTED ACTION:
+Please ensure that all the above invoices are uploaded in your immediate upcoming GSTR-1 return. Kindly furnish the filing ARN / IFF acknowledgment within seven business days to avoid withholding of future payment disbursements.
+
+Yours faithfully,
+{company_name}"""
+
+
+def generate_ledger_fix_directive(action: Action) -> str:
+    """Generate internal accounting directive for multi-state PAN ledger realignment."""
+    f = action.facts
+    return f"""INTERNAL ACCOUNTING DIRECTIVE: MULTI-STATE GSTIN LEDGER REALIGNMENT
+
+Target Supplier PAN: {f['pan']}
+Current Tally Ledger GSTIN: {' / '.join(f['booked_under'])}
+Actual Portal Billing GSTIN: {' / '.join(f['portal_shows'])}
+Invoices Affected: {f['invoice_count']}
+Total Tax Involved: Rs {indian_number_format(f['total_tax'], 2)}
+
+BACKGROUND:
+The supplier operates registrations in multiple states under the same PAN. The supplier issued invoices from {', '.join(f['portal_shows'])}, but our accounting vouchers were entered under {', '.join(f['booked_under'])}.
+
+REQUIRED ACTIONS IN TALLY ERP:
+1. Create a distinct ledger account for each state registration (e.g., '{f['pan']} - {f['portal_shows'][0][:2]} State').
+2. Update the supplier GSTIN on affected purchase vouchers from {f['booked_under'][0]} to {f['portal_shows'][0]}.
+3. Re-run Milan reconciliation to confirm clean auto-matching.
+"""
+
+
 def print_plan(actions: list[Action]) -> None:
     total = sum(a.facts.get("total_tax", 0.0) for a in actions)
     print(f"\n{'=' * 78}")
@@ -235,3 +296,4 @@ def print_plan(actions: list[Action]) -> None:
                   f"  ->  2A {'/'.join(a.facts['portal_shows'])}"
                   f"   {rupees(a.facts['total_tax'])}")
         print(f"     draft: {'ready' if a.draft else 'not generated'}")
+

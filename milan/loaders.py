@@ -39,6 +39,22 @@ _GSTR2A_KEYS = {
     "cess": "cess",
 }
 
+_GSTR2A_CDNR_KEYS = {
+    "gstin/uin of supplier": "gstin",
+    "gstin of supplier": "gstin",
+    "trade/legal name": "supplier",
+    "note type": "note_type",
+    "note number": "inv_no",
+    "note date": "inv_date",
+    "note  date": "inv_date",
+    "taxable value": "taxable",
+    "integrated tax": "igst",
+    "central tax": "cgst",
+    "state tax": "sgst",
+    "cess amount": "cess",
+    "cess": "cess",
+}
+
 _TALLY_KEYS = {
     "date": "date",
     "particulars": "supplier",
@@ -136,6 +152,78 @@ def load_gstr2a(path: str) -> list[Invoice]:
         )
     if not out:
         raise ValueError(f"parsed 0 invoices from {path} -- header matched but no data rows found")
+
+    out.extend(_load_gstr2a_cdnr(wb))
+    return out
+
+
+def _load_gstr2a_cdnr(wb: Workbook) -> list[Invoice]:
+    """Parse Credit / Debit Notes from the CDNR sheet of GSTR-2A if present.
+    Credit notes (Type 'C') reduce ITC and are loaded with negative tax/taxable values,
+    aligning with accounting books."""
+    sheet = next((s for s in wb.sheet_names() if s.strip().upper() == "CDNR"), None)
+    if not sheet:
+        return []
+    rows = list(wb.rows(sheet))
+    if len(rows) < 6:
+        return []
+
+    # Find the 2-row header containing note number / note type
+    header_indices = [
+        idx for idx, r in enumerate(rows[:10])
+        if any("note number" in str(v).lower() or "note type" in str(v).lower() or "gstin" in str(v).lower() for v in r.values())
+    ]
+    if len(header_indices) < 2:
+        return []
+    header_rows = [rows[i] for i in header_indices[:2]]
+    start_data_idx = max(header_indices[:2]) + 1
+
+    cols = header_map(header_rows, _GSTR2A_CDNR_KEYS, merge_rows=2)
+    by_field = {v: k for k, v in cols.items()}
+    if "gstin" not in by_field or "inv_no" not in by_field or "inv_date" not in by_field:
+        return []
+
+    fp_col = next((col for r in header_rows for col, val in r.items()
+                   if val and "filing period" in str(val).lower()), None)
+
+    out = []
+    for i, r in enumerate(rows[start_data_idx:], start=start_data_idx + 1):
+        gstin = (r.get(by_field["gstin"]) or "").strip().upper()
+        date_raw = r.get(by_field["inv_date"])
+        note_no = (r.get(by_field["inv_no"]) or "").strip()
+        if not gstin or not date_raw or not note_no or gstin.startswith("GSTIN"):
+            continue
+        try:
+            inv_date = _parse_ddmmyyyy(date_raw)
+        except (ValueError, TypeError):
+            continue
+
+        note_type = (r.get(by_field.get("note_type", "")) or "C").strip().upper()
+        sign = -1.0 if note_type.startswith("C") else 1.0
+
+        taxable = sign * _f(r.get(by_field.get("taxable", "")))
+        igst = sign * _f(r.get(by_field.get("igst", "")))
+        cgst = sign * _f(r.get(by_field.get("cgst", "")))
+        sgst = sign * _f(r.get(by_field.get("sgst", "")))
+        cess = sign * _f(r.get(by_field.get("cess", "")))
+        fp = (r.get(fp_col) or "").strip() if fp_col else ""
+
+        out.append(
+            Invoice(
+                gstin=gstin,
+                supplier=(r.get(by_field.get("supplier", "")) or "").strip(),
+                inv_no=note_no,
+                inv_date=inv_date,
+                taxable=taxable,
+                igst=igst,
+                cgst=cgst,
+                sgst=sgst,
+                cess=cess,
+                filing_period=fp,
+                source="2A_CDNR",
+                row_id=f"2ACDNR{i:06d}",
+            )
+        )
     return out
 
 
@@ -321,6 +409,94 @@ def load_tally(paths: list[str], *, inward_only: bool = True) -> tuple[list[Invo
     return list(unique.values()), seen
 
 
+
+def _parse_busy_date(raw):
+    if not raw:
+        return None
+    raw_str = str(raw).strip()
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            from datetime import datetime
+            return datetime.strptime(raw_str, fmt).date()
+        except ValueError:
+            pass
+    try:
+        return excel_serial_to_date(raw_str)
+    except Exception:
+        return None
+
+
+def _load_busy_register(rows: list[dict[str, str]], sheet: str, header_row: dict[str, str], header_idx: int) -> tuple[list[Invoice], dict[str, int]]:
+    """Parse Busy Accounting Software Supply Inward / Purchase Register export."""
+    col_party = next((k for k, v in header_row.items() if v and "party" in str(v).lower()), "D")
+    col_gstin = next((k for k, v in header_row.items() if v and "gstin" in str(v).lower()), "E")
+    col_docno = next((k for k, v in header_row.items() if v and ("doc. no" in str(v).lower() or "doc no" in str(v).lower())), "G")
+    col_date  = next((k for k, v in header_row.items() if v and ("doc. date" in str(v).lower() or "doc date" in str(v).lower())), "H")
+    col_taxable = next((k for k, v in header_row.items() if v and "taxable" in str(v).lower()), "J")
+    col_igst  = next((k for k, v in header_row.items() if v and str(v).strip().lower() == "igst"), "L")
+    col_cgst  = next((k for k, v in header_row.items() if v and str(v).strip().lower() == "cgst"), "M")
+    col_sgst  = next((k for k, v in header_row.items() if v and str(v).strip().lower() == "sgst"), "N")
+    col_cess  = next((k for k, v in header_row.items() if v and "cess" in str(v).lower()), "O")
+    col_sec   = next((k for k, v in header_row.items() if v and "section" in str(v).lower()), "B")
+
+    out = []
+    current_inv = None
+    counts: dict[str, int] = {}
+
+    for row_idx, r in enumerate(rows[header_idx + 1:], start=header_idx + 2):
+        row_str = " ".join(str(v) for v in r.values() if v)
+        if "total" in row_str.lower() and (not r.get(col_party) or str(r.get(col_date)).strip() == "Total"):
+            continue
+        party = (r.get(col_party) or "").strip()
+        if "org. inv." in party.lower() or "doc. type" in party.lower():
+            continue
+
+        docno = (r.get(col_docno) or "").strip()
+        gstin = (r.get(col_gstin) or "").strip().upper()
+        date_raw = r.get(col_date)
+
+        taxable = _f(r.get(col_taxable))
+        igst = _f(r.get(col_igst))
+        cgst = _f(r.get(col_cgst))
+        sgst = _f(r.get(col_sgst))
+        cess = _f(r.get(col_cess))
+        sec = (r.get(col_sec) or "B2B").strip().upper()
+
+        # Multi-tax-rate continuation line in Busy
+        if not docno and not gstin:
+            if current_inv is not None and (taxable != 0 or igst != 0 or cgst != 0 or sgst != 0 or cess != 0):
+                current_inv.taxable = round(current_inv.taxable + taxable, 2)
+                current_inv.igst = round(current_inv.igst + igst, 2)
+                current_inv.cgst = round(current_inv.cgst + cgst, 2)
+                current_inv.sgst = round(current_inv.sgst + sgst, 2)
+                current_inv.cess = round(current_inv.cess + cess, 2)
+            continue
+
+        inv_date = _parse_busy_date(date_raw)
+        if not inv_date or not gstin:
+            continue
+
+        counts[sec] = counts.get(sec, 0) + 1
+        current_inv = Invoice(
+            gstin=gstin,
+            supplier=party,
+            inv_no=docno,
+            inv_date=inv_date,
+            taxable=round(taxable, 2),
+            igst=round(igst, 2),
+            cgst=round(cgst, 2),
+            sgst=round(sgst, 2),
+            cess=round(cess, 2),
+            source="BUSY",
+            voucher_type=sec,
+            row_id=f"BUSY{row_idx:06d}",
+        )
+        out.append(current_inv)
+
+    if not out:
+        raise ValueError(f"parsed 0 inward rows from Busy register in {sheet!r}")
+    return out, counts
+
 def _load_one_tally(path: str, *, inward_only: bool = True) -> tuple[list[Invoice], dict[str, int]]:
     wb = Workbook(path)
     sheet = next(
@@ -329,10 +505,16 @@ def _load_one_tally(path: str, *, inward_only: bool = True) -> tuple[list[Invoic
     )
     rows = list(wb.rows(sheet))
 
+    # Check for Busy register header first
+    for idx, r in enumerate(rows[:25]):
+        line = " ".join(str(v).lower() for v in r.values() if v)
+        if ("doc. no" in line or "party" in line or "doc no" in line) and "gstin" in line:
+            return _load_busy_register(rows, sheet, r, idx)
+
     header_row = next((r for r in rows if "particulars" in "".join(v or "" for v in r.values()).lower()
                         and "gstin" in "".join(v or "" for v in r.values()).lower()), None)
     if header_row is None:
-        raise ValueError(f"could not find the header row in {sheet!r}")
+        raise ValueError(f"could not identify accounting register format in {sheet!r}. Supported formats: Tally (DayBook/Purchase) and Busy (Supply Inward Register).")
     cols = header_map([header_row], _TALLY_KEYS, merge_rows=1)
     by_field = {v: k for k, v in cols.items()}
 
@@ -404,3 +586,5 @@ def _load_one_tally(path: str, *, inward_only: bool = True) -> tuple[list[Invoic
 def load_tally_purchase(path: str) -> list[Invoice]:
     """Single-file convenience wrapper, kept for the tests and simple runs."""
     return load_tally([path])[0]
+
+load_books = load_tally

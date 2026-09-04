@@ -70,14 +70,45 @@ def _usable(inv) -> bool:
     Blank cells and bare zeros come from bulk journal entries."""
     return len(inv.strict) > 1 or inv.strict not in ("", "0")
 
+
+def _core_digits(s: str) -> str:
+    """Extract significant invoice number digits (ignoring financial year tokens)."""
+    nums = re.findall(r"\d+", s)
+    if not nums:
+        return ""
+    non_fy = [n for n in nums if n not in ("2024", "2025", "2026", "24", "25", "26", "2425", "2526")]
+    if non_fy:
+        return non_fy[-1].lstrip("0") or "0"
+    return nums[-1].lstrip("0") or "0"
+
+
+def _is_prefix_core_match(a: str, b: str) -> bool:
+    """Check if two invoice numbers match on their core numeric identity.
+    Handles:
+      - Branch/software prefix differences: UP0093 vs UPNUP0093
+      - Embedded zero differences: DUN-4-1-25-26 vs DUN-4-01-25-26
+      - Formatted prefix differences: 15462 vs T-15462/2025-26, 266 vs RSA/2526/266
+      - Suffix numbering: 791 vs NDSPL252680791
+    """
+    da = _core_digits(a)
+    db = _core_digits(b)
+    if da and db:
+        if da == db:
+            return True
+        if (len(da) >= 3 and db.endswith(da)) or (len(db) >= 3 and da.endswith(db)):
+            return True
+    return False
+
 # Stages, strongest first. The label is what the advocate reads in the report.
-EXACT = "exact"                    # same normalised number, same tax
-FORMAT = "format_variant"          # same number once FY/prefix noise removed
-AMOUNT = "amount_mismatch"         # same invoice, tax differs -> needs attention
-TYPO = "typo_in_number"            # one character out; tax and date agree
-CODED = "supplier_code"            # one side carries the supplier's own prefix
-BYVALUE = "value_and_date"         # number unusable; unique tax+date candidate
-AMBIGUOUS = "ambiguous"            # several equally good candidates -> review
+EXACT = "exact"                                    # same normalised number, same tax
+FORMAT = "format_variant"                          # same number once FY/prefix noise removed
+AMOUNT = "amount_mismatch"                         # same invoice, tax differs -> needs attention
+TYPO = "typo_in_number"                            # one character out; tax and date agree
+CODED = "supplier_code"                            # one side carries the supplier's own prefix
+PREFIX_VARIANT = "supplier_prefix_variant"         # same supplier prefix/digits; tax and date agree
+BYVALUE = "value_and_date"                         # number unusable; unique tax+date candidate
+CREDIT_NOTE_DATE = "credit_note_amount_date"       # credit note matched on tax and date
+AMBIGUOUS = "ambiguous"                            # several equally good candidates -> review
 
 
 @dataclass
@@ -181,6 +212,14 @@ def reconcile(tally: list[Invoice], gstr: list[Invoice]) -> Result:
               and _edit_distance(t.loose, g.loose) <= 1,
               TYPO, "invoice number differs by one character; tax and date agree")
 
+    # 4c. Supplier prefix or numeric core variant (e.g. UP0093 vs UPNUP0093,
+    #     DUN-4-1-25-26 vs DUN-4-01-25-26, NDSPL252680791 vs 791).
+    #     Requires same GSTIN, same tax, and dates within 60 days.
+    pass_over(lambda t, g: _usable(t) and _usable(g)
+              and tax_close(t, g) and date_close(t, g, 60)
+              and _is_prefix_core_match(t.inv_no, g.inv_no),
+              PREFIX_VARIANT, "same supplier prefix/digits; tax and date agree")
+
     # 5. Invoice number is unusable on one side (bulk entry, blank cell).
     #    Only fires when a number is genuinely missing -- never to override two
     #    readable numbers that disagree, which is how recurring billers (same
@@ -188,6 +227,13 @@ def reconcile(tally: list[Invoice], gstr: list[Invoice]) -> Result:
     pass_over(lambda t, g: tax_close(t, g) and date_close(t, g)
               and not (_usable(t) and _usable(g)),
               BYVALUE, "matched on tax and date; invoice number unusable")
+
+    # 6. Credit notes with internal voucher numbers (e.g. 1, 2, 4, 5 where supplier
+    #    filed statutory note number). Negative tax confirms both sides are credit
+    #    adjustments, preventing false matches across standard recurring bills.
+    pass_over(lambda t, g: ((t.tax < 0 and g.tax < 0) or t.voucher_type == "CDNR")
+              and tax_close(t, g) and date_close(t, g, 45),
+              CREDIT_NOTE_DATE, "credit note matched on tax and date")
 
     only_t = [t for t in tally if t.row_id not in used_t]
     only_g = [g for g in gstr if g.row_id not in used_g]
