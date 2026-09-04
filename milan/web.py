@@ -278,39 +278,6 @@ h1, h2, h3, .serif-title {
   color: var(--text-muted);
   font-weight: 500;
 }
-.header-meta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.badge-ca-desk {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent-blue-dark);
-  background: var(--accent-blue-bg);
-  border: 1px solid var(--accent-blue-border);
-  padding: 6px 12px;
-  border-radius: var(--radius-xs);
-}
-.badge-status-secure {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  background: var(--trust-emerald-bg);
-  border: 1px solid var(--trust-emerald-border);
-  color: var(--trust-emerald);
-  padding: 6px 12px;
-  border-radius: var(--radius-xs);
-  font-size: 12px;
-  font-weight: 600;
-}
-.status-dot {
-  width: 7px;
-  height: 7px;
-  background-color: var(--trust-emerald);
-  border-radius: 50%;
-  display: inline-block;
-  box-shadow: 0 0 0 2.5px rgba(5, 150, 105, 0.25);
 }
 
 /* Tabs Navigation */
@@ -2247,7 +2214,6 @@ _LANDING_HTML = """<!doctype html>
         __MARK__
       </a>
       <div class="header-actions">
-        <div class="badge-ca-desk">Chartered Accountant Tax Standard</div>
         <a href="/app" class="btn-nav-action">
           Enter Workspace
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
@@ -2427,7 +2393,7 @@ _LANDING_HTML = """<!doctype html>
 
     <!-- Minimalist Trust Footer -->
     <div class="trust-footer">
-      मिलान &middot; Chartered Accountant Tax Standard &middot; 100% Local Standard Library Execution &middot; Zero Cloud Telemetry &middot; Strict Client Confidentiality
+      मिलान &middot; Zero Cloud Telemetry &middot; Strict Client Confidentiality
     </div>
   </div>
 </body>
@@ -2463,13 +2429,6 @@ _APP_HTML = """<!doctype html>
       <a href="/" class="brand-lockup" title="मिलान — Return to Home">
         __MARK__
       </a>
-      <div class="header-meta">
-        <div class="badge-ca-desk">Audit Desk &middot; File Upload</div>
-        <div class="badge-status-secure">
-          <span class="status-dot"></span>
-          System Status: Secure &amp; Local
-        </div>
-      </div>
     </header>
 
     <!-- Workspace Header -->
@@ -2753,7 +2712,7 @@ _APP_HTML = """<!doctype html>
     </div>
 
     <div class="trust-footer">
-      मिलान &middot; Chartered Accountant Tax Standard &middot; 100% Local Standard Library Execution &middot; Zero Cloud Telemetry &middot; Strict Client Confidentiality
+      मिलान &middot; Zero Cloud Telemetry &middot; Strict Client Confidentiality
     </div>
 
   </div>
@@ -2999,13 +2958,6 @@ _DASHBOARD_HTML = """<!doctype html>
         <span class="brand-sep">/</span>
         <span class="brand-stats">__GSTR_COUNT__ portal bills &middot; __TALLY_COUNT__ books bills &middot; __MATCH_COUNT__ confirmed matches</span>
       </a>
-      <div class="header-meta">
-        <div class="badge-ca-desk">Audit Desk &middot; Partner View</div>
-        <div class="badge-status-secure">
-          <span class="status-dot"></span>
-          System Status: Secure &amp; Encrypted &middot; Local Execution
-        </div>
-      </div>
     </header>
 
     <!-- Navigation Tabs (4 Core Pillars) -->
@@ -3258,7 +3210,7 @@ _DASHBOARD_HTML = """<!doctype html>
     </div>
 
     <div class="trust-footer">
-      मिलान &middot; Chartered Accountant Tax Standard &middot; 100% Local Standard Library Execution &middot; Zero Cloud Telemetry &middot; Strict Client Confidentiality
+      मिलान &middot; Zero Cloud Telemetry &middot; Strict Client Confidentiality
     </div>
 
   </div>
@@ -3826,7 +3778,6 @@ def _render_error_page(
       <a href="/" class="brand-lockup" title="मिलान — Return to Home">
         {_MARK}
       </a>
-      <div class="badge-ca-desk">Chartered Accountant Tax Standard</div>
     </header>
 
     <div class="card" style="{top_border}padding:36px 30px;text-align:center;">
