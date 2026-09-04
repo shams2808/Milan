@@ -130,7 +130,7 @@ def calculate_section_50_interest(
     under Section 16(2)(c). If availed and utilized, interest runs at 18% p.a.
     """
     ineligible = classify_ineligible(res, gstr)
-    unfiled = ineligible.get("not_filed", [])
+    unfiled = ineligible.get("not_filed", []) + ineligible.get("supplier_absent", [])
     if not unfiled:
         return Section50Interest(
             total_ineligible_tax_claimed=0.0,
@@ -170,7 +170,7 @@ def forecast_cash_position(
 ) -> CashForecast:
     """Forecast next month's net GST cash outflow and trapped vendor capital."""
     ineligible = classify_ineligible(res, gstr)
-    unfiled = ineligible.get("not_filed", [])
+    unfiled = ineligible.get("not_filed", []) + ineligible.get("supplier_absent", [])
     trapped_capital = sum(i.tax for i in unfiled)
 
     if gstr3b and len(gstr3b.months) > 0:

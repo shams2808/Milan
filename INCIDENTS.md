@@ -385,3 +385,68 @@ into a good file and confirming the validator rejects it. All six are caught.
 that my model of the file was wrong, rather than assuming the one bug I had
 found was the only one. A validator written after the first failure would have
 caught the count mismatch immediately and saved the second round trip.
+
+---
+
+## #10 — Recognized invoice prefix/coding variants flagged as Partial Mismatches
+
+**Symptom:** Invoices matched via supplier prefix variants or coding (e.g. Nulith Graphic Private Limited: `UPNUP0068` in GSTR-2A vs `UP0068` in Tally) were matched by the cascade, but appeared on Sheet 4 ("Partial Mismatch") with reason `"Bill number"`. Both sides had identical taxable (₹47,200), identical tax (₹8,496), and identical dates (2025-05-09, 0 days apart). The user noted: *"better but these are not partial mismatc refer here, one says UPNUP0068 and other says UP0068, its the same bill but different way of typin"*.
+
+**Root Cause:** `partial_mismatches(res)` checked:
+```python
+if p.tally.loose != p.gstr.loose and _edit_distance(p.tally.loose, p.gstr.loose) >= 2:
+    reasons.append("Bill number")
+```
+When this check was originally written in Incident #8, the matching cascade had only basic rules, and the author assumed any edit distance $\ge 2$ was a "major bill number difference". However, later stages (`supplier_code` and `supplier_prefix_variant`) match invoices where branch prefixes, software prefixes, or leading zero variants (like `UP` vs `UPNUP`, or `UPP/201` vs `201`) share the same underlying numeric identity. Because their edit distance is $\ge 2$, they were falsely flagged as "Bill number" partial mismatches even when amount and date were 100% identical.
+
+**Fix:** Recognized variants of the same invoice number (from stages `exact`, `format_variant`, `amount_mismatch`, `typo_in_number`, `supplier_code`, `supplier_prefix_variant`, or matching `_is_prefix_core_match` / `_is_coded`) are the same bill typed differently, not a bill-number mismatch. "Bill number" difference is now only appended when invoice numbers are genuinely unreconciled (e.g. unusable/blank numbers or internal voucher numbers).
+
+Added `test_partial_mismatch_ignores_prefix_and_software_variants` to pin this invariant.
+
+
+---
+
+## #10 — "₹-31,41,840 of unclaimed tax credit", found while writing a pitch deck
+
+**Gathering current figures for the deck.** The two-way finding came back as
+**221 invoices, −₹31,41,840 of unclaimed ITC.** A negative quantity of money
+you failed to claim is not a finding, it is a bug.
+
+The 2A loader had gained a CDNR reader — the sheet holding **credit notes**.
+A credit note carries negative tax: the supplier has reduced the supply. The
+classifier treated them as ordinary 2A rows, so they landed in
+`missing_invoice` alongside real invoices and the two summed:
+
+```
+2A rows          2,563  =  2,446 invoices (+5,74,46,250) + 117 credit notes (−37,90,327)
+"never booked"     221  =    109 invoices (+6,47,692)    + 112 credit notes (−37,89,533)
+```
+
+**Both findings were destroyed by the addition.** An unrecorded credit note
+means the opposite of unclaimed credit: the supplier withdrew the supply and
+the client is *still claiming ITC on it*. That is a liability. Netting it
+against genuinely unclaimed invoices cancelled a real +₹6.4L opportunity
+against a real −₹37.9L exposure and reported the residue as one meaningless
+number.
+
+Credit notes now get their own bucket and their own sheet, with the correct
+instruction ("reduce the ITC claimed — the supplier has already withdrawn
+it"). They are never netted against invoices.
+
+**The part that matters more.** After fixing the classifier, all 35 tests
+passed — including `test_workbook_sheets_are_disjoint_and_complete`, which
+exists precisely to catch a bucket going missing. It passed because
+**the synthetic year contains no credit notes.** On the real file, the
+workbook was silently dropping all **145 of them, worth ₹37.9L** — not
+misfiled, absent.
+
+This is incident #1 and #2 for the third time: *a green suite means the test
+data contains the failure mode, and nothing more.* The fix was to teach
+`synth.py` to issue credit notes. The disjointness test then failed
+immediately (`unplaced: 2`) — it had always been capable of catching this and
+had simply never been given anything to catch. Sheet added, test green again,
+and now green means something.
+
+**What I would have put in a pitch deck:** a negative headline number, or —
+worse, had the sign happened to land the other way — a confident figure that
+quietly omitted ₹37.9L of client exposure.

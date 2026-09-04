@@ -91,7 +91,8 @@ def build_year(n_suppliers: int = 45, n_invoices: int = 1200, seed: int = 3):
     gstr: list[Invoice] = []
     planted = dict(pairs=0, only_tally=0, only_gstr=0, amount_mismatch=0,
                    cross_period=0, duplicate=0, wrong_gstin=0, format_variant=0,
-                   supplier_prefix=0, blank_invno=0, transposed=0)
+                   supplier_prefix=0, blank_invno=0, transposed=0,
+                   unrecorded_credit_note=0)
 
     counters: dict[str, int] = {}
 
@@ -184,6 +185,24 @@ def build_year(n_suppliers: int = 45, n_invoices: int = 1200, seed: int = 3):
             tally.append(mk("TALLY", tally_no, book_period, gst=bad))
             gstr.append(mk("2A", gstr_no, book_period))
             planted["wrong_gstin"] += 1
+        elif roll < 0.29:                    # supplier issued a credit note the
+            #                                  client never recorded. NEGATIVE tax:
+            #                                  the client is still claiming credit
+            #                                  the supplier has withdrawn. Real 2A
+            #                                  files carry these in a CDNR sheet;
+            #                                  the synthetic year had none, so a
+            #                                  whole bucket went untested and 145
+            #                                  real rows were silently dropped.
+            #                                  See INCIDENTS.md #10.
+            cn = mk("2A", f"CN/{seq}", book_period)
+            cn.source = "2A_CDNR"
+            cn.igst, cn.cgst, cn.sgst, cn.cess = (-cn.igst, -cn.cgst, -cn.sgst, -cn.cess)
+            cn.taxable = -cn.taxable
+            cn.row_id = f"2ACN{i:05d}"
+            gstr.append(cn)
+            tally.append(mk("TALLY", tally_no, book_period))
+            planted["unrecorded_credit_note"] += 1
+            planted["only_tally"] += 1
         else:                                # ordinary clean pair
             tally.append(mk("TALLY", tally_no, book_period))
             gstr.append(mk("2A", gstr_no, book_period))

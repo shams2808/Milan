@@ -35,7 +35,27 @@ from datetime import date, datetime
 from typing import Any
 
 # Style ids, matching the cellXfs order written below.
-S_DEFAULT, S_HEADER, S_MONEY, S_HIGHLIGHT = 0, 1, 2, 3
+S_DEFAULT = 0          # Regular text, left aligned, subtle grid border
+S_HEADER_NAVY = 1      # Bold white, navy fill #0F172A, center aligned
+S_MONEY = 2            # #,##0.00 right aligned, subtle grid border
+S_HIGHLIGHT = 3        # Amber fill #FFF2CC, #,##0.00 right aligned
+S_HEADER_EMERALD = 4   # Bold white, emerald fill #047857, center aligned
+S_HEADER_CRIMSON = 5   # Bold white, crimson fill #991B1B, center aligned
+S_HEADER_INDIGO = 6    # Bold white, indigo fill #3730A3, center aligned
+S_HEADER_SLATE = 7     # Bold white, slate fill #334155, center aligned
+S_MONEY_MINT = 8       # Mint fill #ECFDF5, #,##0.00 right aligned
+S_MONEY_ROSE = 9       # Rose fill #FFF1F2, #,##0.00 right aligned
+S_MONEY_AMBER = 10     # Amber fill #FFFBEB, #,##0.00 right aligned
+S_MONEY_TOTAL = 11     # Bold, accounting double-bottom border, #,##0.00 right aligned
+S_TEXT_MINT = 12       # Mint fill #ECFDF5, emerald bold text
+S_TEXT_ROSE = 13       # Rose fill #FFF1F2, crimson bold text
+S_TEXT_AMBER = 14      # Amber fill #FFFBEB, amber bold text
+S_CENTER = 15          # Center aligned text, subtle grid border
+S_DATE = 16            # Centered date, subtle grid border
+S_BOLD = 17            # Bold text, left aligned, subtle grid border
+S_BOLD_TOTAL = 18      # Bold text, accounting double-bottom border
+
+S_HEADER = S_HEADER_NAVY  # Backward compatibility
 
 _MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _RELS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -204,34 +224,61 @@ class Workbook:
 
     def _styles(self) -> str:
         fonts = [
-            '<font><sz val="11"/><name val="Calibri"/></font>',
-            '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>',
+            '<font><sz val="10"/><color rgb="FF1E293B"/><name val="Calibri"/></font>',
+            '<font><b/><sz val="10"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>',
+            '<font><b/><sz val="10"/><color rgb="FF0F172A"/><name val="Calibri"/></font>',
+            '<font><b/><sz val="10"/><color rgb="FF065F46"/><name val="Calibri"/></font>',
+            '<font><b/><sz val="10"/><color rgb="FF991B1B"/><name val="Calibri"/></font>',
+            '<font><b/><sz val="10"/><color rgb="FF92400E"/><name val="Calibri"/></font>',
         ]
         fills = [
             '<fill><patternFill patternType="none"/></fill>',
             '<fill><patternFill patternType="gray125"/></fill>',
-            '<fill><patternFill patternType="solid"><fgColor rgb="FF1F5132"/>'
-            '<bgColor indexed="64"/></patternFill></fill>',
-            '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/>'
-            '<bgColor indexed="64"/></patternFill></fill>',
+            '<fill><patternFill patternType="solid"><fgColor rgb="FF0F172A"/><bgColor indexed="64"/></patternFill></fill>',
+            '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/><bgColor indexed="64"/></patternFill></fill>',
+            '<fill><patternFill patternType="solid"><fgColor rgb="FF047857"/><bgColor indexed="64"/></patternFill></fill>',
+            '<fill><patternFill patternType="solid"><fgColor rgb="FF991B1B"/><bgColor indexed="64"/></patternFill></fill>',
+            '<fill><patternFill patternType="solid"><fgColor rgb="FF3730A3"/><bgColor indexed="64"/></patternFill></fill>',
+            '<fill><patternFill patternType="solid"><fgColor rgb="FF334155"/><bgColor indexed="64"/></patternFill></fill>',
+            '<fill><patternFill patternType="solid"><fgColor rgb="FFECFDF5"/><bgColor indexed="64"/></patternFill></fill>',
+            '<fill><patternFill patternType="solid"><fgColor rgb="FFFFF1F2"/><bgColor indexed="64"/></patternFill></fill>',
+            '<fill><patternFill patternType="solid"><fgColor rgb="FFFFFBEB"/><bgColor indexed="64"/></patternFill></fill>',
+            '<fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/><bgColor indexed="64"/></patternFill></fill>',
+        ]
+        borders = [
+            '<border><left/><right/><top/><bottom/><diagonal/></border>',
+            '<border><left style="thin"><color rgb="FFCBD5E1"/></left><right style="thin"><color rgb="FFCBD5E1"/></right><top style="thin"><color rgb="FFCBD5E1"/></top><bottom style="thin"><color rgb="FFCBD5E1"/></bottom><diagonal/></border>',
+            '<border><left/><right/><top style="thin"><color rgb="FF0F172A"/></top><bottom style="double"><color rgb="FF0F172A"/></bottom><diagonal/></border>',
         ]
         # numFmtId 4 is the built-in "#,##0.00" -- built-ins avoid any
         # locale/currency-symbol surprises on the practitioner's machine.
         xfs = [
-            '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>',
-            '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0"'
-            ' applyFont="1" applyFill="1"/>',
-            '<xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0"'
-            ' applyNumberFormat="1"/>',
-            '<xf numFmtId="4" fontId="0" fillId="3" borderId="0" xfId="0"'
-            ' applyNumberFormat="1" applyFill="1"/>',
+            '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>',
+            '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>',
+            '<xf numFmtId="4" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>',
+            '<xf numFmtId="4" fontId="0" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>',
+            '<xf numFmtId="0" fontId="1" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>',
+            '<xf numFmtId="0" fontId="1" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>',
+            '<xf numFmtId="0" fontId="1" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>',
+            '<xf numFmtId="0" fontId="1" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>',
+            '<xf numFmtId="4" fontId="0" fillId="8" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>',
+            '<xf numFmtId="4" fontId="0" fillId="9" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>',
+            '<xf numFmtId="4" fontId="0" fillId="10" borderId="1" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>',
+            '<xf numFmtId="4" fontId="2" fillId="0" borderId="2" xfId="0" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>',
+            '<xf numFmtId="0" fontId="3" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>',
+            '<xf numFmtId="0" fontId="4" fillId="9" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>',
+            '<xf numFmtId="0" fontId="5" fillId="10" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>',
+            '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>',
+            '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>',
+            '<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>',
+            '<xf numFmtId="0" fontId="2" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>',
         ]
         return (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             f'<styleSheet xmlns="{_MAIN}">'
             f'<fonts count="{len(fonts)}">{"".join(fonts)}</fonts>'
             f'<fills count="{len(fills)}">{"".join(fills)}</fills>'
-            '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+            f'<borders count="{len(borders)}">{"".join(borders)}</borders>'
             '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
             f'<cellXfs count="{len(xfs)}">{"".join(xfs)}</cellXfs>'
             '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'

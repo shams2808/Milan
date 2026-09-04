@@ -52,14 +52,29 @@ def _total(rows) -> float:
 
 
 def classify_unclaimed(res: Result, tally: list[Invoice]) -> dict[str, list[Invoice]]:
-    """Split 'in 2A, not in Tally' by WHY it is not in Tally."""
+    """Split 'in 2A, not in Tally' by WHY it is not in Tally.
+
+    Credit notes are separated first and never mixed with invoices. A credit
+    note carries NEGATIVE tax: the supplier reduced the supply. An unrecorded
+    one therefore means the exact opposite of unclaimed credit -- the client is
+    still claiming ITC the supplier has already withdrawn, so it is a liability,
+    not an opportunity.
+
+    Summing them together inverts the sign and destroys both findings: on the
+    real client, 112 unrecorded credit notes worth -Rs 37.9L cancelled 109
+    genuinely unclaimed invoices worth +Rs 6.5L and reported the total as
+    "-Rs 31.4L of unclaimed ITC", which is not a number that can exist.
+    See INCIDENTS.md #10.
+    """
     tally_gstins = {t.gstin for t in tally}
     tally_pans = {pan(t.gstin) for t in tally}
     matched_gstins = {p.gstr.gstin for p in res.pairs}
 
     out: dict[str, list[Invoice]] = defaultdict(list)
     for g in res.only_gstr:
-        if g.gstin not in tally_gstins and pan(g.gstin) in tally_pans:
+        if g.source == "2A_CDNR":
+            out["unrecorded_credit_note"].append(g)
+        elif g.gstin not in tally_gstins and pan(g.gstin) in tally_pans:
             out["other_registration"].append(g)
         elif g.gstin in matched_gstins or g.gstin in tally_gstins:
             out["missing_invoice"].append(g)

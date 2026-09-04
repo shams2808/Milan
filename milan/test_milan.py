@@ -61,12 +61,25 @@ def test_supplier_code_survives_leading_zeros():
     assert not _is_coded("12", "99912")
 
 
-def test_never_matches_across_gstin():
-    """The practitioner's hard rule: the GST number must be the same."""
+def test_never_matches_across_unrelated_companies():
+    """Unrelated companies (different PAN) must never match across GSTIN."""
+    gst_c = "06AAACT9999K1ZZ"
     res = reconcile([_inv("TALLY", "0001", gstin=GST_A)],
-                    [_inv("2A", "0001", gstin=GST_B)])
+                    [_inv("2A", "0001", gstin=gst_c)])
     assert res.pairs == []
     assert len(res.only_tally) == 1 and len(res.only_gstr) == 1
+
+
+def test_same_pan_different_gstin_matches_as_gstin_conflict():
+    """Same company (PAN), different state GSTIN matches and routes to partial mismatch."""
+    res = reconcile([_inv("TALLY", "0001", gstin=GST_A)],
+                    [_inv("2A", "0001", gstin=GST_B)])
+    assert len(res.pairs) == 1
+    assert res.pairs[0].stage == "gstin_conflict"
+    from .workbook import partial_mismatches
+    pm = partial_mismatches(res)
+    assert len(pm) == 1
+    assert "GST number" in pm[0][1]
 
 
 def test_same_number_months_apart_is_not_a_match():
@@ -81,9 +94,22 @@ def test_value_and_date_refuses_two_readable_numbers():
     """Recurring billers charge an identical amount every month. Matching on
     value alone across two perfectly readable, different numbers is how you
     confidently claim the wrong invoice."""
-    res = reconcile([_inv("TALLY", "GST00010")], [_inv("2A", "GST00006")])
+    res = reconcile([_inv("TALLY", "GST00010", day=2)], [_inv("2A", "GST00006", day=25)])
     assert all(p.stage != BYVALUE for p in res.pairs)
     assert res.pairs == []
+
+
+def test_amount_match_with_different_bill_number_routes_to_partial_mismatch():
+    """When amount and date match but bill number differs (e.g. City Computers 4030 vs 4029),
+    match and route to partial mismatch rather than unfiled / unbooked."""
+    res = reconcile([_inv("TALLY", "4029", tax=273.0, day=14)],
+                    [_inv("2A", "4030", tax=273.0, day=14)])
+    assert len(res.pairs) == 1
+    assert res.pairs[0].stage == "amount_date_diff_inv"
+    from .workbook import partial_mismatches
+    pm = partial_mismatches(res)
+    assert len(pm) == 1
+    assert "Bill number" in pm[0][1]
 
 
 def test_value_and_date_still_rescues_a_blank_number():
@@ -168,6 +194,8 @@ def test_workbook_sheets_are_disjoint_and_complete():
         "Not in 2A": [i.row_id for i in ineligible.get("not_filed", [])
                       + ineligible.get("supplier_absent", [])],
         "Other Ledgers": [i.row_id for i in unclaimed.get("supplier_absent", [])],
+        "Credit Notes Not Booked": [i.row_id for i in
+                                    unclaimed.get("unrecorded_credit_note", [])],
         "Partial (conflicts)": [i.row_id for i in unclaimed.get("other_registration", [])
                                 + ineligible.get("other_registration", [])],
     }
@@ -234,6 +262,21 @@ def test_partial_mismatch_ignores_single_character_typos():
     res = reconcile([t], [g])
     assert len(res.pairs) == 1, "should still match"
     assert partial_mismatches(res) == [], "one edit apart is not a mismatch"
+
+
+def test_partial_mismatch_ignores_prefix_and_software_variants():
+    """The practitioner was explicit: 'UPNUP0068' vs 'UP0068' is the same
+    bill, just a different way of typing the invoice number.
+    Recognized branch/prefix variants and supplier codes must NOT be flagged
+    as partial mismatches on the bill number when tax and date agree."""
+    from .workbook import partial_mismatches
+
+    t = _inv("TALLY", "UP0068", tax=8496.0)
+    g = _inv("2A", "UPNUP0068", tax=8496.0)
+    res = reconcile([t], [g])
+    assert len(res.pairs) == 1
+    assert partial_mismatches(res) == [], "prefix variant (UP vs UPNUP) is not a partial mismatch"
+
 
 
 def test_partial_mismatch_catches_date_and_taxable_differences():
@@ -337,9 +380,9 @@ def test_three_way_position_and_timing():
 
     assert pos.available_2a == 57441592.32
     assert pos.booked_tally == 56057647.31
-    assert pos.matched_tax == 55428415.88
+    assert pos.matched_tax == 55973229.52
     assert pos.claimed_3b == 53976364.20
-    assert pos.matched_unclaimed == 1452051.68
+    assert pos.matched_unclaimed == 1996865.32
     assert pos.gap_2a_3b == 3465228.12
     assert len(pos.monthly) == 12
 
@@ -487,7 +530,7 @@ def test_busy_register_loading_and_reconciliation():
     # 2. Test reconciliation against 2A
     gstr = load_gstr2a(str(p_2a_up))
     res = reconcile(busy_invs, gstr)
-    assert len(res.pairs) == 276
+    assert len(res.pairs) == 279
     assert sum(p.gstr.tax for p in res.pairs) > 8600000
 
     # Specifically test Nulith UPNUP0093 vs UP0093
@@ -495,6 +538,19 @@ def test_busy_register_loading_and_reconciliation():
     assert nulith_pair.gstr.inv_no == "UPNUP0093"
     assert nulith_pair.stage == "supplier_prefix_variant"
     assert nulith_pair.tally.tax == 65901.6
+
+    # Test Panamax sister GSTIN match (07... in Tally vs 06... in 2A)
+    panamax_pair = next(p for p in res.pairs if p.tally.inv_no == "KUN-1889-25-26")
+    assert panamax_pair.stage == "gstin_conflict"
+    assert panamax_pair.tally.gstin == "07AALCP6741K1ZX"
+    assert panamax_pair.gstr.gstin == "06AALCP6741K1ZZ"
+    assert panamax_pair.tally.tax == 13744.8
+
+    # Test City Computers amount and date match with 1-digit bill number diff
+    city_pair = next(p for p in res.pairs if p.tally.inv_no == "Cc/4029/25-26")
+    assert city_pair.stage == "amount_date_diff_inv"
+    assert city_pair.tally.inv_no == "Cc/4029/25-26"
+    assert city_pair.gstr.inv_no == "CC/4030/25-26"
 
 
 def test_supplier_prefix_variant_nulith_match():

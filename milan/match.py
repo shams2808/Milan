@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from .core import Invoice, date_close, tax_close
+from .core import Invoice, date_close, tax_close, pan, TAX_TOLERANCE
 
 def _edit_distance(a: str, b: str) -> int:
     """Damerau-Levenshtein: an adjacent transposition costs 1, not 2.
@@ -108,7 +108,16 @@ CODED = "supplier_code"                            # one side carries the suppli
 PREFIX_VARIANT = "supplier_prefix_variant"         # same supplier prefix/digits; tax and date agree
 BYVALUE = "value_and_date"                         # number unusable; unique tax+date candidate
 CREDIT_NOTE_DATE = "credit_note_amount_date"       # credit note matched on tax and date
+GSTIN_CONFLICT = "gstin_conflict"                  # same company (PAN), different GST registration
+AMOUNT_DIFF_INV = "amount_date_diff_inv"           # matched on amount and date; bill number differs
+PAN_AMOUNT_MATCH = "pan_amount_date_match"         # same company (PAN), different GSTIN and bill number; matched on amount and date
 AMBIGUOUS = "ambiguous"                            # several equally good candidates -> review
+
+_LEGAL_SUFFIXES = re.compile(r"\b(PVT|PRIVATE|LTD|LIMITED|LLP|CO|CORP|FINAL|ENTERPRISES|TRADERS|SOLUTIONS)\b", re.I)
+def _norm_name(s: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9\s]", " ", s or "").upper()
+    tokens = [w for w in cleaned.split() if not _LEGAL_SUFFIXES.fullmatch(w)]
+    return "".join(tokens)
 
 
 @dataclass
@@ -158,18 +167,27 @@ def reconcile(tally: list[Invoice], gstr: list[Invoice]) -> Result:
     used_g: set[str] = set()
 
     by_gstin: dict[str, list[Invoice]] = defaultdict(list)
+    by_pan: dict[str, list[Invoice]] = defaultdict(list)
     for g in gstr:
         by_gstin[g.gstin].append(g)
+        by_pan[pan(g.gstin)].append(g)
 
-    def avail(gstin: str) -> list[Invoice]:
+    def avail_gstin(gstin: str) -> list[Invoice]:
         return [g for g in by_gstin.get(gstin, []) if g.row_id not in used_g]
 
-    def pass_over(predicate, stage, note=""):
+    def avail_pan(p_str: str) -> list[Invoice]:
+        return [g for g in by_pan.get(p_str, []) if g.row_id not in used_g]
+
+    def avail_all() -> list[Invoice]:
+        return [g for g in gstr if g.row_id not in used_g]
+
+    def pass_over(candidates_fn, predicate, stage, note=""):
         """One cascade stage. Unique candidate matches; several go to review."""
         for t in tally:
             if t.row_id in used_t:
                 continue
-            hits = [g for g in avail(t.gstin) if predicate(t, g)]
+            candidates = candidates_fn(t)
+            hits = [g for g in candidates if predicate(t, g)]
             if len(hits) == 1:
                 _consume(pairs, used_t, used_g, t, hits[0], stage, note)
             elif len(hits) > 1:
@@ -180,60 +198,70 @@ def reconcile(tally: list[Invoice], gstr: list[Invoice]) -> Result:
         return date_close(t, g, MAX_MATCH_GAP_DAYS)
 
     # 1. Identical once punctuation and leading zeros are gone.
-    pass_over(lambda t, g: t.strict == g.strict and tax_close(t, g) and near_enough(t, g),
+    pass_over(lambda t: avail_gstin(t.gstin),
+              lambda t, g: t.strict == g.strict and tax_close(t, g) and near_enough(t, g),
               EXACT)
 
     # 2. Identical once financial-year and document-type noise is stripped.
-    pass_over(lambda t, g: t.loose == g.loose and tax_close(t, g) and near_enough(t, g),
+    pass_over(lambda t: avail_gstin(t.gstin),
+              lambda t, g: t.loose == g.loose and tax_close(t, g) and near_enough(t, g),
               FORMAT, "invoice number written differently on the two sides")
 
-    # 3. Same invoice, different tax. A real finding, not a matching failure.
-    #    Requires the dates to agree closely -- if the number matches but tax
-    #    AND date both disagree, these are two different documents.
-    pass_over(lambda t, g: t.loose == g.loose and not tax_close(t, g) and date_close(t, g),
+    # 3. Same invoice, different tax.
+    pass_over(lambda t: avail_gstin(t.gstin),
+              lambda t, g: t.loose == g.loose and not tax_close(t, g) and date_close(t, g),
               AMOUNT, "same invoice number, tax value differs")
 
-    # 4a and 4b both compare one invoice number against another, so both
-    # require an actual number on each side. A blank cell normalises to "0",
-    # which sits one edit away from every single-character invoice number --
-    # without this guard, blanks were claimed as typos of "6". A missing
-    # number is not a typo, it is a missing number: that is stage 5's job.
-
-    # 4a. One side carries a supplier code the other never recorded.
-    pass_over(lambda t, g: _usable(t) and _usable(g)
+    # 4a. Coded prefix
+    pass_over(lambda t: avail_gstin(t.gstin),
+              lambda t, g: _usable(t) and _usable(g)
               and tax_close(t, g) and date_close(t, g)
               and (_is_coded(t.loose, g.loose) or _is_coded(g.loose, t.loose)),
               CODED, "one side carries the supplier's own invoice prefix")
 
-    # 4b. A single character out -- transposed or mistyped digit. Requires tax
-    #     AND date to agree, so a near-miss number alone can never carry it.
-    pass_over(lambda t, g: _usable(t) and _usable(g)
+    # 4b. Single character typo
+    pass_over(lambda t: avail_gstin(t.gstin),
+              lambda t, g: _usable(t) and _usable(g)
               and tax_close(t, g) and date_close(t, g)
               and _edit_distance(t.loose, g.loose) <= 1,
               TYPO, "invoice number differs by one character; tax and date agree")
 
-    # 4c. Supplier prefix or numeric core variant (e.g. UP0093 vs UPNUP0093,
-    #     DUN-4-1-25-26 vs DUN-4-01-25-26, NDSPL252680791 vs 791).
-    #     Requires same GSTIN, same tax, and dates within 60 days.
-    pass_over(lambda t, g: _usable(t) and _usable(g)
+    # 4c. Supplier prefix or numeric core variant
+    pass_over(lambda t: avail_gstin(t.gstin),
+              lambda t, g: _usable(t) and _usable(g)
               and tax_close(t, g) and date_close(t, g, 60)
               and _is_prefix_core_match(t.inv_no, g.inv_no),
               PREFIX_VARIANT, "same supplier prefix/digits; tax and date agree")
 
-    # 5. Invoice number is unusable on one side (bulk entry, blank cell).
-    #    Only fires when a number is genuinely missing -- never to override two
-    #    readable numbers that disagree, which is how recurring billers (same
-    #    amount every month) produce confident false matches.
-    pass_over(lambda t, g: tax_close(t, g) and date_close(t, g)
+    # 5. Number unusable on one side
+    pass_over(lambda t: avail_gstin(t.gstin),
+              lambda t, g: tax_close(t, g) and date_close(t, g)
               and not (_usable(t) and _usable(g)),
               BYVALUE, "matched on tax and date; invoice number unusable")
 
-    # 6. Credit notes with internal voucher numbers (e.g. 1, 2, 4, 5 where supplier
-    #    filed statutory note number). Negative tax confirms both sides are credit
-    #    adjustments, preventing false matches across standard recurring bills.
-    pass_over(lambda t, g: ((t.tax < 0 and g.tax < 0) or t.voucher_type == "CDNR")
+    # 6. Credit notes
+    pass_over(lambda t: avail_gstin(t.gstin),
+              lambda t, g: ((t.tax < 0 and g.tax < 0) or t.voucher_type == "CDNR")
               and tax_close(t, g) and date_close(t, g, 45),
               CREDIT_NOTE_DATE, "credit note matched on tax and date")
+
+    # 7. Same company (PAN), different state GSTIN, invoice number matches/variants
+    pass_over(lambda t: [g for g in avail_pan(pan(t.gstin)) if g.gstin != t.gstin],
+              lambda t, g: tax_close(t, g) and near_enough(t, g)
+              and (t.strict == g.strict or t.loose == g.loose or _is_prefix_core_match(t.inv_no, g.inv_no)
+                   or _is_coded(t.loose, g.loose) or _is_coded(g.loose, t.loose)
+                   or (_usable(t) and _usable(g) and _edit_distance(t.loose, g.loose) <= 1)),
+              GSTIN_CONFLICT, "same company (PAN), different GST registration")
+
+    # 8. Same GSTIN, Amount & Date Match, Different Bill Number (tight 3-day window to guard recurring billers)
+    pass_over(lambda t: avail_gstin(t.gstin),
+              lambda t, g: tax_close(t, g) and abs(t.taxable - g.taxable) <= 5.0 and date_close(t, g, 3),
+              AMOUNT_DIFF_INV, "matched on amount and date; bill number differs")
+
+    # 9. Same PAN, Amount & Date Match, Different Bill Number
+    pass_over(lambda t: [g for g in avail_pan(pan(t.gstin)) if g.gstin != t.gstin],
+              lambda t, g: tax_close(t, g) and abs(t.taxable - g.taxable) <= 5.0 and date_close(t, g, 3),
+              PAN_AMOUNT_MATCH, "same company (PAN), different GSTIN and bill number; matched on amount and date")
 
     only_t = [t for t in tally if t.row_id not in used_t]
     only_g = [g for g in gstr if g.row_id not in used_g]

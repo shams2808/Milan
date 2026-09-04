@@ -26,7 +26,21 @@ from __future__ import annotations
 from collections import defaultdict
 
 from .core import GSTR3BSummary, TAX_TOLERANCE, ThreeWayPosition, Invoice, pan, rupees
-from .match import Result, _edit_distance
+from .match import (
+    AMOUNT,
+    AMOUNT_DIFF_INV,
+    CODED,
+    EXACT,
+    FORMAT,
+    GSTIN_CONFLICT,
+    PAN_AMOUNT_MATCH,
+    PREFIX_VARIANT,
+    TYPO,
+    Result,
+    _edit_distance,
+    _is_coded,
+    _is_prefix_core_match,
+)
 from .report import (
     ITC_DEADLINE,
     classify_ineligible,
@@ -34,10 +48,30 @@ from .report import (
     compute_three_way_position,
     pan_conflicts,
 )
-from .xlsx_write import Workbook
+from .xlsx_write import (
+    Workbook,
+    S_DEFAULT,
+    S_HEADER_NAVY,
+    S_HEADER_EMERALD,
+    S_HEADER_CRIMSON,
+    S_HEADER_INDIGO,
+    S_HEADER_SLATE,
+    S_MONEY,
+    S_MONEY_MINT,
+    S_MONEY_ROSE,
+    S_MONEY_AMBER,
+    S_MONEY_TOTAL,
+    S_TEXT_MINT,
+    S_TEXT_ROSE,
+    S_TEXT_AMBER,
+    S_CENTER,
+    S_DATE,
+    S_BOLD,
+    S_BOLD_TOTAL,
+)
 
-# cellXfs indices defined in xlsx_write._styles_xml
-S_HEADER, S_MONEY = 1, 2
+# Backward-compat aliases
+S_HEADER = S_HEADER_NAVY
 
 _LEDGER_COLS = ["Supplier", "GSTIN", "Invoice No", "Date",
                 "Taxable", "IGST", "CGST", "SGST", "Total Tax", "Why", "Action"]
@@ -60,6 +94,9 @@ def partial_mismatches(res: Result) -> list[tuple]:
     difference, a MAJOR bill-number difference, or a bill-date difference.
     "Major" is load-bearing -- they were explicit that a one-character typo is
     a match, not a mismatch, so a single-edit difference is not reported here.
+    Similarly, recognized invoice number variants (e.g. branch prefixes like
+    UP0068 vs UPNUP0068, supplier codes like UPP/201 vs 201, or formatting)
+    are the same bill typed differently, not a partial mismatch.
 
     Returns (pair, reasons, taxable_delta, tax_delta, day_delta).
     """
@@ -70,13 +107,24 @@ def partial_mismatches(res: Result) -> list[tuple]:
         d_days = (p.tally.inv_date - p.gstr.inv_date).days
 
         reasons = []
+        if p.tally.gstin != p.gstr.gstin:
+            reasons.append("GST number")
         if abs(d_taxable) > TAX_TOLERANCE:
             reasons.append("Taxable amount")
         if abs(d_tax) > TAX_TOLERANCE:
             reasons.append("Tax amount")
         if d_days:
             reasons.append("Bill date")
-        if p.tally.loose != p.gstr.loose and _edit_distance(p.tally.loose, p.gstr.loose) >= 2:
+
+        is_same_number = (
+            p.stage in (EXACT, FORMAT, AMOUNT, TYPO, CODED, PREFIX_VARIANT, GSTIN_CONFLICT)
+            or p.tally.loose == p.gstr.loose
+            or _edit_distance(p.tally.loose, p.gstr.loose) <= 1
+            or _is_coded(p.tally.loose, p.gstr.loose)
+            or _is_coded(p.gstr.loose, p.tally.loose)
+            or _is_prefix_core_match(p.tally.inv_no, p.gstr.inv_no)
+        )
+        if not is_same_number or p.stage in (AMOUNT_DIFF_INV, PAN_AMOUNT_MATCH):
             reasons.append("Bill number")
 
         if reasons:
@@ -137,17 +185,24 @@ def _ledger_rows(invoices: list[Invoice], why: str, action: str) -> list[list]:
             for i in sorted(invoices, key=lambda x: -x.tax)]
 
 
-def _money_styles(rows: list[list], cols: list[int], first_data_row: int = 1) -> dict:
-    return {(r, c): S_MONEY
+def _money_styles(rows: list[list], cols: list[int], first_data_row: int = 1, style: int = S_MONEY) -> dict:
+    return {(r, c): style
             for r in range(first_data_row, len(rows))
             for c in cols
             if c < len(rows[r]) and isinstance(rows[r][c], (int, float))}
 
 
+def _col_styles(rows: list[list], cols: list[int], style: int, first_data_row: int = 1) -> dict:
+    return {(r, c): style
+            for r in range(first_data_row, len(rows))
+            for c in cols
+            if c < len(rows[r])}
+
+
 def _sheet_totals(res: Result, tally: list[Invoice], gstr: list[Invoice]) -> dict:
     unclaimed = classify_unclaimed(res, tally)
     ineligible = classify_ineligible(res, gstr)
-    not_in_tally = unclaimed.get("missing_invoice", [])
+    not_in_tally = unclaimed.get("missing_invoice", []) + unclaimed.get("unrecorded_credit_note", [])
     not_in_2a = ineligible.get("not_filed", []) + ineligible.get("supplier_absent", [])
     other_ledgers = unclaimed.get("supplier_absent", [])
     conflicts = pan_conflicts(res, tally, gstr)
@@ -250,26 +305,53 @@ def write_workbook(
     wb = Workbook()
 
     summary = _build_summary(t, days_left, len(res.pairs), twp=twp)
+    summary_styles = _col_styles(summary, [1], S_CENTER, first_data_row=3)
+    for r, srow in enumerate(summary):
+        if r < 3:
+            summary_styles[(r, 0)] = S_BOLD
+        elif srow and (srow[0].startswith("Total") or "bottom line" in srow[0].lower()):
+            summary_styles[(r, 0)] = S_BOLD_TOTAL
+            summary_styles[(r, 1)] = S_BOLD_TOTAL
+            summary_styles[(r, 2)] = S_MONEY_TOTAL
+            summary_styles[(r, 3)] = S_BOLD_TOTAL
+        elif srow and any(kw in srow[0] for kw in ["PILE", "Matched", "ITC Position"]):
+            summary_styles[(r, 0)] = S_BOLD
     wb.add_sheet("Summary", summary, freeze_rows=3,
-                 col_widths={0: 34, 1: 10, 2: 18, 3: 58})
+                 header_style=S_HEADER_NAVY,
+                 col_widths={0: 34, 1: 10, 2: 18, 3: 58},
+                 cell_styles=summary_styles)
 
     # --- Sheet 2: in 2A, never booked -------------------------------------
     rows = [_LEDGER_COLS] + _ledger_rows(
         t["not_in_tally"],
         "In 2A; this supplier is already in your books, this bill is not",
         f"Claim before 30 Nov 2026 ({days_left} days left)")
+    sheet2_styles = {
+        **_col_styles(rows, [1], S_CENTER),
+        **_col_styles(rows, [3], S_DATE),
+        **_money_styles(rows, [4, 5, 6, 7, 8], style=S_MONEY_MINT),
+        **_col_styles(rows, [10], S_TEXT_MINT),
+    }
     wb.add_sheet("Not in Tally", rows, freeze_rows=1,
+                 header_style=S_HEADER_EMERALD,
                  autofilter_range=f"A1:K{len(rows)}", col_widths=_LEDGER_WIDTHS,
-                 cell_styles=_money_styles(rows, [4, 5, 6, 7, 8]))
+                 cell_styles=sheet2_styles)
 
     # --- Sheet 3: in books, not on the portal ------------------------------
     rows = [_LEDGER_COLS] + _ledger_rows(
         t["not_in_2a"],
         "Claimed in Tally, supplier has not filed it in 2A",
         "Chase the supplier to file, or reverse with interest u/s 50")
+    sheet3_styles = {
+        **_col_styles(rows, [1], S_CENTER),
+        **_col_styles(rows, [3], S_DATE),
+        **_money_styles(rows, [4, 5, 6, 7, 8], style=S_MONEY_ROSE),
+        **_col_styles(rows, [10], S_TEXT_ROSE),
+    }
     wb.add_sheet("Not in 2A", rows, freeze_rows=1,
+                 header_style=S_HEADER_CRIMSON,
                  autofilter_range=f"A1:K{len(rows)}", col_widths=_LEDGER_WIDTHS,
-                 cell_styles=_money_styles(rows, [4, 5, 6, 7, 8]))
+                 cell_styles=sheet3_styles)
 
     # --- Sheet 4: both bills side by side ----------------------------------
     rows = [_PAIR_COLS]
@@ -281,25 +363,67 @@ def write_workbook(
             d_taxable, d_tax, d_days,
         ])
     rows.extend(gstin_conflict_rows(res, tally, gstr))
+    sheet4_styles = {
+        **_col_styles(rows, [1], S_TEXT_AMBER),
+        **_col_styles(rows, [2, 7], S_CENTER),
+        **_col_styles(rows, [4, 9], S_DATE),
+        **_money_styles(rows, [5, 6, 10, 11, 12, 13], style=S_MONEY),
+        **_col_styles(rows, [14], S_CENTER),
+    }
     wb.add_sheet("Partial Mismatch", rows, freeze_rows=1,
+                 header_style=S_HEADER_INDIGO,
                  autofilter_range=f"A1:O{len(rows)}", col_widths=_PAIR_WIDTHS,
-                 cell_styles=_money_styles(rows, [5, 6, 10, 11, 12, 13]))
+                 cell_styles=sheet4_styles)
 
     # --- Sheet 5: confirmed out of scope -----------------------------------
     rows = [_LEDGER_COLS] + _ledger_rows(
         t["other_ledgers"],
         "Supplier never appears in the purchase register",
         "Confirmed nominal - reconciled through separate ledgers")
+    sheet5_styles = {
+        **_col_styles(rows, [1], S_CENTER),
+        **_col_styles(rows, [3], S_DATE),
+        **_money_styles(rows, [4, 5, 6, 7, 8], style=S_MONEY),
+    }
     wb.add_sheet("Other Ledgers (FYI)", rows, freeze_rows=1,
+                 header_style=S_HEADER_SLATE,
                  autofilter_range=f"A1:K{len(rows)}", col_widths=_LEDGER_WIDTHS,
-                 cell_styles=_money_styles(rows, [4, 5, 6, 7, 8]))
+                 cell_styles=sheet5_styles)
+
+    # --- Credit notes the client never recorded ----------------------------
+    # These carry NEGATIVE tax and are the opposite of unclaimed credit: the
+    # supplier reduced the supply and the client is still claiming ITC on the
+    # original amount. They get their own sheet because netting them against
+    # invoices inverts both figures, and because they were being dropped from
+    # the workbook entirely. See INCIDENTS.md #10.
+    cn = classify_unclaimed(res, tally).get("unrecorded_credit_note", [])
+    if cn:
+        rows = [_LEDGER_COLS] + _ledger_rows(
+            sorted(cn, key=lambda i: i.tax),
+            "Credit note in 2A, never recorded in the books",
+            "Reduce the ITC claimed - the supplier has already withdrawn it")
+        cn_styles = {
+            **_col_styles(rows, [1], S_CENTER),
+            **_col_styles(rows, [3], S_DATE),
+            **_money_styles(rows, [4, 5, 6, 7, 8], style=S_MONEY_ROSE),
+        }
+        wb.add_sheet("Credit Notes Not Booked", rows, freeze_rows=1,
+                     header_style=S_HEADER_CRIMSON,
+                     autofilter_range=f"A1:K{len(rows)}", col_widths=_LEDGER_WIDTHS,
+                     cell_styles=cn_styles)
 
     # --- Sheet 6: Three-way ITC Position & Timing Schedule -----------------
     if twp is not None and gstr3b is not None:
         itc_rows = _build_itc_position_rows(twp, gstr3b)
+        itc_styles = _money_styles(itc_rows, [1, 2, 3, 4, 5], first_data_row=4)
+        last_r = len(itc_rows) - 1
+        itc_styles[(last_r, 0)] = S_BOLD_TOTAL
+        for c in [1, 2, 3, 4, 5]:
+            itc_styles[(last_r, c)] = S_MONEY_TOTAL
         wb.add_sheet("ITC Position", itc_rows, freeze_rows=4,
+                     header_style=S_HEADER_NAVY,
                      col_widths=_ITC_POS_WIDTHS,
-                     cell_styles=_money_styles(itc_rows, [1, 2, 3, 4, 5], first_data_row=4))
+                     cell_styles=itc_styles)
 
     wb.write(path)
 
