@@ -1,14 +1,21 @@
 """Vercel serverless entrypoint.
 
-Vercel's Python runtime looks for one of two names in this module:
+Vercel's Python runtime scans this file for a top-level `handler`, `app` or
+`application`. That scan is static -- it reads the AST rather than importing
+the module -- so the symbol has to be *defined* here, not aliased in.
 
-    handler  -- a BaseHTTPRequestHandler subclass   <- what Milan is
-    app      -- a WSGI or ASGI application
+    handler = Handler          <- valid Python, NOT detected: it is an
+                                  assignment whose value is an imported name
+    class handler(Handler)     <- detected, and the shape Vercel documents
 
-This previously exported `app = Handler`, which handed a
-BaseHTTPRequestHandler class to the runtime as though it were a WSGI
-callable. The runtime would have tried to invoke it as app(environ,
-start_response) and the deployment would never have served a request.
+An earlier version exported `app = Handler`, which was wrong twice over: the
+name `app` means a WSGI/ASGI callable, and Milan is a BaseHTTPRequestHandler.
+Then `handler = Handler` fixed the name but kept the undetectable shape and
+failed the build with "Could not find a top-level app, application, or
+handler in api/index.py".
+
+Subclassing adds no behaviour -- every route, header and upload limit comes
+from milan.web.Handler.
 """
 
 import sys
@@ -20,4 +27,6 @@ if str(root) not in sys.path:
 
 from milan.web import Handler
 
-handler = Handler
+
+class handler(Handler):  # noqa: N801 - Vercel requires this exact name
+    pass
